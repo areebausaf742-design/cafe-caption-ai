@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { Mail, MessageCircle } from "lucide-react";
+import { CalendarDays, Mail, MessageCircle } from "lucide-react";
 
+import TrackedLink from "@/components/TrackedLink";
 import {
+  BOOKING_URL,
   CONTACT_EMAIL,
   CONTACT_NAME,
   CONTACT_PHONE_DISPLAY,
@@ -59,24 +61,41 @@ export default function SiteFooter() {
             </p>
             <ul className="space-y-2">
               <li>
-                <a
+                <TrackedLink
                   href={whatsappUrl(DEFAULT_WHATSAPP_MESSAGE)}
+                  location="footer"
+                  label="whatsapp"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 text-espresso-600 transition hover:text-espresso-900"
                 >
                   <MessageCircle className="h-3.5 w-3.5" />
                   {CONTACT_PHONE_DISPLAY}
-                </a>
+                </TrackedLink>
               </li>
               <li>
-                <a
+                <TrackedLink
                   href={`mailto:${CONTACT_EMAIL}`}
+                  location="footer"
+                  label="email"
                   className="inline-flex items-center gap-2 break-all text-espresso-600 transition hover:text-espresso-900"
                 >
                   <Mail className="h-3.5 w-3.5 shrink-0" />
                   {CONTACT_EMAIL}
-                </a>
+                </TrackedLink>
+              </li>
+              <li>
+                <TrackedLink
+                  href={BOOKING_URL}
+                  location="footer"
+                  label="booking"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-espresso-600 transition hover:text-espresso-900"
+                >
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  Book a free call
+                </TrackedLink>
               </li>
               <li className="pt-1">
                 <Link

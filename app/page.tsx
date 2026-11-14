@@ -1,11 +1,15 @@
-import { ArrowUpRight, Mail, MessageCircle } from "lucide-react";
+import { ArrowUpRight, CalendarDays, Mail, MessageCircle } from "lucide-react";
 
+import BookingLink from "@/components/BookingLink";
 import CaptionStudio from "@/components/CaptionStudio";
 import Faq from "@/components/Faq";
 import LeadForm from "@/components/LeadForm";
 import Packages from "@/components/Packages";
 import Process from "@/components/Process";
+import TrackedLink from "@/components/TrackedLink";
 import {
+  BOOKING_NOTE,
+  BOOKING_URL,
   CONTACT_EMAIL,
   CONTACT_PHONE,
   CONTACT_PHONE_DISPLAY,
@@ -77,6 +81,19 @@ export default function HomePage() {
           </p>
         </div>
 
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+          <BookingLink location="hero" variant="primary" />
+          <TrackedLink
+            href="#contact"
+            location="hero"
+            label="quote_form"
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-espresso-900/15 bg-white/50 px-4 py-2.5 text-[12.5px] font-semibold text-espresso-800 transition hover:border-espresso-900/30 hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+          >
+            Get a quote in 24h
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </TrackedLink>
+        </div>
+
         <div className="mt-6 sm:mt-8">
           <CaptionStudio />
         </div>
@@ -109,10 +126,7 @@ export default function HomePage() {
           <span className="label">Words from the counter</span>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             {TESTIMONIALS.map((item) => (
-              <figure
-                key={item.name}
-                className="card p-4 sm:p-5"
-              >
+              <figure key={item.name} className="card p-4 sm:p-5">
                 <blockquote className="font-display text-[14.5px] leading-relaxed text-espresso-800">
                   “{item.quote}”
                 </blockquote>
@@ -152,8 +166,32 @@ export default function HomePage() {
             </p>
 
             <div className="mt-5 space-y-2">
-              <a
+              <TrackedLink
+                href={BOOKING_URL}
+                location="contact"
+                label="booking"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-center gap-3 rounded-xl border border-espresso-900/15 bg-white/70 px-3.5 py-3 transition hover:border-espresso-900/30 hover:bg-white"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-caramel-300/60">
+                  <CalendarDays className="h-4 w-4 text-espresso-800" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-semibold text-espresso-900">
+                    Book a free call
+                  </span>
+                  <span className="block text-[11px] text-espresso-600">
+                    {BOOKING_NOTE}
+                  </span>
+                </span>
+                <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-espresso-400 transition group-hover:text-espresso-700" />
+              </TrackedLink>
+
+              <TrackedLink
                 href={whatsappUrl(DEFAULT_WHATSAPP_MESSAGE)}
+                location="contact"
+                label="whatsapp"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group flex items-center gap-3 rounded-xl border border-espresso-900/10 bg-cream-50/70 px-3.5 py-3 transition hover:border-espresso-900/25 hover:bg-white/70"
@@ -170,12 +208,14 @@ export default function HomePage() {
                   </span>
                 </span>
                 <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-espresso-400 transition group-hover:text-espresso-700" />
-              </a>
+              </TrackedLink>
 
-              <a
+              <TrackedLink
                 href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
                   "Café website enquiry",
                 )}`}
+                location="contact"
+                label="email"
                 className="group flex items-center gap-3 rounded-xl border border-espresso-900/10 bg-cream-50/70 px-3.5 py-3 transition hover:border-espresso-900/25 hover:bg-white/70"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-espresso-900/5">
@@ -190,7 +230,7 @@ export default function HomePage() {
                   </span>
                 </span>
                 <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-espresso-400 transition group-hover:text-espresso-700" />
-              </a>
+              </TrackedLink>
             </div>
 
             <p className="mt-3 text-[10.5px] text-espresso-500">{RESPONSE_NOTE}</p>

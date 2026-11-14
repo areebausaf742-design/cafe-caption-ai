@@ -1,5 +1,7 @@
 import { Check, Clock } from "lucide-react";
 
+import TrackedLink from "@/components/TrackedLink";
+
 import {
   PACKAGES,
   formatINR,
@@ -104,12 +106,14 @@ function PackageCard({ pkg }: { pkg: Package }) {
       </ul>
 
       <div className="mt-auto flex flex-col gap-1.5 pt-4">
-        <a
+        <TrackedLink
           href={whatsappUrl(
             `Hi Areeb, I'm interested in the ${pkg.name} package (${formatINR(
               pkg.price,
             )}) for my café.`,
           )}
+          location="packages"
+          label={`package:${pkg.id}`}
           target="_blank"
           rel="noopener noreferrer"
           className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[11.5px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/50 ${
@@ -119,17 +123,19 @@ function PackageCard({ pkg }: { pkg: Package }) {
           }`}
         >
           Start with {pkg.name}
-        </a>
-        <a
+        </TrackedLink>
+        <TrackedLink
           href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
             `Question about the ${pkg.name} package`,
           )}`}
+          location="packages"
+          label={`ask:${pkg.id}`}
           className={`text-center text-[10.5px] underline-offset-2 hover:underline ${
             dark ? "text-cream-200/60" : "text-espresso-500"
           }`}
         >
           Ask a question first
-        </a>
+        </TrackedLink>
       </div>
     </div>
   );

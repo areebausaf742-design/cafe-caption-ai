@@ -17,11 +17,12 @@ Gemini key is read only inside a `server-only` Route Handler.
 | Section | Purpose |
 | --- | --- |
 | Sticky header | Wordmark, anchor nav, WhatsApp CTA |
-| Hero + caption studio | The free tool: photo description, café name, city, language, tone, copy buttons, regenerate |
-| Packages | Three fixed-price offers (₹4,999 / ₹10,000 / ₹18,500), each with a WhatsApp CTA |
-| How it works | Three-step process |
+| Hero + caption studio | The free tool: photo description, café name, city, language, tone, copy buttons, regenerate, plus one-tap examples and a sample result shown before the first click |
+| Packages | Three fixed-price offers (₹4,999 / **₹10,000 “Most popular”** / ₹18,500), each with a WhatsApp CTA |
+| How it works | Three-step process with a “book a free call” link |
 | FAQ | Native `<details>` accordion, also emitted as FAQ structured data |
-| Contact | WhatsApp + email cards and a lead form that stores enquiries and offers a WhatsApp handoff |
+| Contact | Book a call, WhatsApp and email cards, plus the **“Get a quote in 24h”** form that opens a prefilled WhatsApp message |
+| Analytics | Vercel Web Analytics with `generate`, `copy`, `lead_submit` and `cta_click` events |
 | Footer | Contact details, legal links, plain-language disclosure |
 
 Every customer-facing string (packages, FAQs, phone, email, process) lives in
@@ -69,21 +70,37 @@ Everything is in **`lib/business.ts`**:
 export const CONTACT_EMAIL = "areebausaf742@gmail.com";
 export const CONTACT_PHONE = "919044996869";        // digits only + country code
 export const CONTACT_PHONE_DISPLAY = "+91 90449 96869";
-export const BOOKING_URL = "";                      // optional Cal.com / Calendly
+export const BOOKING_URL = "https://cal.com/areeb/discovery-call"; // ✏️ replace
+export const BOOKING_LABEL = "Book a free call";
+export const BOOKING_NOTE = "20 minutes · no slides, no pressure";
 export const PACKAGES = [ … ];                      // prices, features, badges
 export const FAQS = [ … ];
 export const TESTIMONIALS = [];                     // hidden until you add real ones
 ```
 
-`BOOKING_URL` is unused while empty; call CTAs go to WhatsApp. Add a link and it
-can be surfaced wherever you prefer.
+`BOOKING_URL` is the **single source** for every booking button — hero, process
+section, contact card and footer all read it, so one edit updates all four. The
+value above is a placeholder; swap in your real Cal.com (or Calendly) link.
+
+**Prices** come from `PACKAGES` in the same file. The middle package carries
+`featured: true` and `badge: "Most popular"`, which is what gives it the dark
+treatment and the badge on the site.
 
 ### 3. Public URL (recommended)
 
 `NEXT_PUBLIC_SITE_URL=https://your-domain.com` — used for canonical URLs,
 `sitemap.xml`, `robots.txt`, structured data and the Open Graph image.
 
-### 4. Lead capture (optional, Supabase)
+### 4. Lead capture (WhatsApp by default, Supabase optional)
+
+The quote form needs **no backend**. On submit it validates the four answers,
+builds a WhatsApp message containing the visitor's name, café, city and what
+they need, and opens it in a new tab — the visitor presses send, and you reply
+in a normal chat. Nothing is stored anywhere, which is also what the form tells
+visitors.
+
+If you later want a database copy, `POST /api/leads` is already built and
+rate-limited:
 
 1. Run **`supabase/schema.sql`** in Supabase → SQL Editor. It creates
    `public.leads` with insert-only RLS (no public reads).
@@ -99,6 +116,10 @@ Without these the form still submits successfully: the visitor is shown a
 one-tap **“Send it on WhatsApp”** handoff instead of an error, so no enquiry is
 lost — you just don't keep a database record. Check the server log for
 `[leads] Supabase is not configured` to confirm.
+
+The form does not call this endpoint today — it hands straight to WhatsApp.
+Wire it back by posting the same fields from `components/LeadForm.tsx` if you
+want rows in a table.
 
 Enquiries store: name, café, city, WhatsApp, email, interest, message, source and
 referring page. Read them in the Supabase table editor:
@@ -143,6 +164,27 @@ offer the WhatsApp handoff.
 
 ---
 
+## Analytics
+
+`@vercel/analytics` is installed and `<Analytics />` renders from the root
+layout. Events are declared and sent through one helper — `lib/analytics.ts`:
+
+| Event | Fires when | Properties |
+| --- | --- | --- |
+| `generate` | A caption set comes back successfully | `tone`, `source` (`example` / `form`) |
+| `copy` | A caption, hashtag set or “copy all” succeeds | `kind` |
+| `lead_submit` | The quote form is submitted | `interest` |
+| `cta_click` | Any WhatsApp, email, booking or package CTA | `location`, `label` |
+
+No personal data is ever sent — no names, numbers or message text.
+
+> **Plan note:** Vercel only records *custom events* on Pro/Enterprise. On Hobby
+> the calls are accepted and dropped (page views still work), so nothing breaks
+> and no code changes are needed if you upgrade. In `next dev` every event is
+> logged to the console as `[analytics] name {…}` so you can verify wiring.
+
+---
+
 ## SEO
 
 `app/layout.tsx` holds metadata (title template, description, keywords, Open
@@ -168,18 +210,21 @@ they match how you actually operate (payments, refunds, data retention).
 app/
   api/generate/route.ts    # server-only Gemini endpoint
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
-  layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD
+  layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
   privacy/, terms/         # legal pages
   opengraph-image.tsx      # generated social card
   robots.ts, sitemap.ts, manifest.ts
 components/
   CaptionStudio.tsx        # the client tool (form, states, results, copy)
-  LeadForm.tsx             # contact form + WhatsApp handoff
+  LeadForm.tsx             # "Get a quote in 24h" → prefilled WhatsApp message
+  BookingLink.tsx          # every "book a call" button, reads BOOKING_URL
+  TrackedLink.tsx          # <a> that reports a cta_click event
   Packages.tsx, Process.tsx, Faq.tsx
   SiteHeader.tsx, SiteFooter.tsx
 lib/
-  business.ts              # ✏️ contact details, packages, FAQs, copy
+  business.ts              # ✏️ contact details, packages, booking link, copy
+  analytics.ts             # typed event catalogue (generate/copy/lead_submit/cta_click)
   types.ts                 # shared request/response types, tones, languages
   leads.ts                 # lead validation shared by client + server
   rate-limit.ts            # hashed-IP limiter used by both API routes
