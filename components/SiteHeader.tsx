@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 
+import TrackedLink from "@/components/TrackedLink";
 import {
   DEFAULT_WHATSAPP_MESSAGE,
   whatsappUrl,
@@ -50,8 +51,10 @@ export default function SiteHeader() {
           ))}
         </nav>
 
-        <a
+        <TrackedLink
           href={whatsappUrl(DEFAULT_WHATSAPP_MESSAGE)}
+          location="header"
+          label="whatsapp"
           target="_blank"
           rel="noopener noreferrer"
           className="btn-dark"
@@ -59,7 +62,7 @@ export default function SiteHeader() {
           <MessageCircle className="h-3.5 w-3.5 text-[#4ADE80]" />
           <span className="hidden sm:inline">Talk to Areeb</span>
           <span className="sm:hidden">WhatsApp</span>
-        </a>
+        </TrackedLink>
       </div>
     </header>
   );

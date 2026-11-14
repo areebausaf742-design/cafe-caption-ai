@@ -1,3 +1,4 @@
+import BookingLink from "@/components/BookingLink";
 import { PROCESS_STEPS } from "@/lib/business";
 
 export default function Process() {
@@ -28,6 +29,15 @@ export default function Process() {
           </li>
         ))}
       </ol>
+
+      <p className="mt-6 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-relaxed text-espresso-600">
+        Prefer to talk before committing?
+        <BookingLink
+          location="process"
+          variant="inline"
+          label="Book a free 20-minute call"
+        />
+      </p>
     </section>
   );
 }

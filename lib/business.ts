@@ -25,11 +25,19 @@ export const CONTACT_NAME = "Areeb";
 export const RESPONSE_NOTE = "Replies within a few hours · 10am–9pm IST";
 
 /**
- * Optional booking link (Cal.com, Calendly, Google Appointment Schedules…).
- * Leave empty to send every call CTA to WhatsApp instead.
- * Example: "https://cal.com/areeb/15min"
+ * ✏️  REPLACE THIS — your Cal.com link.
+ *
+ * Every "book a call" button on the site reads this constant, so changing it
+ * here updates the hero, the process section, the contact card and the footer.
+ * While it still says "your-handle" it is a placeholder.
  */
-export const BOOKING_URL = "";
+export const BOOKING_URL = "https://cal.com/areeb/discovery-call";
+
+/** Button text for booking CTAs. */
+export const BOOKING_LABEL = "Book a free call";
+
+/** Small print under booking CTAs. */
+export const BOOKING_NOTE = "20 minutes · no slides, no pressure";
 
 /** Build a WhatsApp deep link with a pre-filled message. */
 export function whatsappUrl(message: string): string {
@@ -85,7 +93,7 @@ export const PACKAGES: Package[] = [
     price: 10000,
     priceNote: "one-time",
     featured: true,
-    badge: "Best value",
+    badge: "Most popular",
     delivery: "Delivered in 5–7 days",
     includes: [
       "5-page mobile-first website",

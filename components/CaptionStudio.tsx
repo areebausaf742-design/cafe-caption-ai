@@ -29,6 +29,7 @@ import {
   type Language,
   type Tone,
 } from "@/lib/types";
+import { track } from "@/lib/analytics";
 
 const LOADING_STEPS = [
   "Reading the details…",
@@ -81,7 +82,11 @@ export default function CaptionStudio() {
   /* ----------------------------- generation ----------------------------- */
 
   const generate = useCallback(
-    async (override?: { description?: string; tone?: Tone }) => {
+    async (override?: {
+      description?: string;
+      tone?: Tone;
+      source?: "example" | "form";
+    }) => {
       const text = (override?.description ?? description).trim();
       const activeTone = override?.tone ?? tone;
 
@@ -152,6 +157,13 @@ export default function CaptionStudio() {
 
         setCaptions(payload.captions);
         setStatus("success");
+        track({
+          name: "generate",
+          props: {
+            tone: activeTone,
+            source: override?.source ?? "form",
+          },
+        });
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === "AbortError";
         setError({
@@ -190,26 +202,35 @@ export default function CaptionStudio() {
 
   /* -------------------------------- copy -------------------------------- */
 
-  const copy = useCallback(async (text: string, key: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const scratch = document.createElement("textarea");
-      scratch.value = text;
-      scratch.setAttribute("readonly", "");
-      scratch.style.position = "fixed";
-      scratch.style.opacity = "0";
-      document.body.appendChild(scratch);
-      scratch.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(scratch);
-      if (!ok) return;
-    }
+  const copy = useCallback(
+    async (
+      text: string,
+      key: string,
+      kind: "caption" | "hashtags" | "all" = "caption",
+    ) => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const scratch = document.createElement("textarea");
+        scratch.value = text;
+        scratch.setAttribute("readonly", "");
+        scratch.style.position = "fixed";
+        scratch.style.opacity = "0";
+        document.body.appendChild(scratch);
+        scratch.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(scratch);
+        if (!ok) return;
+      }
 
-    setCopiedKey(key);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopiedKey(null), 2200);
-  }, []);
+      setCopiedKey(key);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopiedKey(null), 2200);
+
+      track({ name: "copy", props: { kind } });
+    },
+    [],
+  );
 
   useEffect(() => {
     return () => {
@@ -236,12 +257,12 @@ export default function CaptionStudio() {
           }`,
       )
       .join("\n\n———\n\n");
-    void copy(text, "all");
+    void copy(text, "all", "all");
   };
 
   const runExample = (example: string) => {
     setDescription(example);
-    void generate({ description: example });
+    void generate({ description: example, source: "example" });
   };
 
   /* -------------------------------- view -------------------------------- */
@@ -599,7 +620,7 @@ export default function CaptionStudio() {
           <div className="mt-4 rounded-xl border border-dashed border-espresso-900/15 bg-white/35 p-3.5">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-espresso-400">
-                Example output
+                Sample result
               </span>
               <span className="text-[10px] text-espresso-400">
                 3 options · 5 hashtags each
@@ -747,7 +768,11 @@ function CaptionCard({
   item: Caption;
   index: number;
   copiedKey: string | null;
-  onCopy: (text: string, key: string) => void;
+  onCopy: (
+    text: string,
+    key: string,
+    kind: "caption" | "hashtags" | "all",
+  ) => void;
   delay?: number;
 }) {
   const captionKey = `caption-${index}`;
@@ -787,13 +812,13 @@ function CaptionCard({
         <CopyButton
           copied={copiedKey === captionKey}
           label="Copy caption"
-          onClick={() => onCopy(item.caption, captionKey)}
+          onClick={() => onCopy(item.caption, captionKey, "caption")}
           ariaLabel={`Copy caption ${index + 1}`}
         />
         <CopyButton
           copied={copiedKey === tagsKey}
           label="Copy hashtags"
-          onClick={() => onCopy(item.hashtags.join(" "), tagsKey)}
+          onClick={() => onCopy(item.hashtags.join(" "), tagsKey, "hashtags")}
           ariaLabel={`Copy hashtags for caption ${index + 1}`}
           disabled={item.hashtags.length === 0}
         />
