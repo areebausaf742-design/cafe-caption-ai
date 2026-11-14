@@ -323,13 +323,14 @@ export default function CaptionStudio() {
           <div className="flex flex-wrap gap-1.5">
             {EXAMPLES.map((example) => (
               <button
-                key={example}
+                key={example.label}
                 type="button"
-                onClick={() => runExample(example)}
+                onClick={() => runExample(example.text)}
                 disabled={isLoading}
-                className="pill max-w-full px-2.5 py-1 text-[11px] disabled:opacity-50"
+                title={example.text}
+                className="pill px-2.5 py-1 text-[11px] disabled:opacity-50"
               >
-                <span className="max-w-[210px] truncate">{example}</span>
+                {example.label}
               </button>
             ))}
           </div>
