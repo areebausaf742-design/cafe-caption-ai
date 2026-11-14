@@ -7,8 +7,6 @@
  */
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import { NextResponse } from "next/server";
 import {
   GoogleGenerativeAI,
@@ -23,6 +21,11 @@ import type {
   Language,
   Tone,
 } from "@/lib/types";
+import {
+  rateLimit,
+  withRateHeaders,
+  type RateLimitResult,
+} from "@/lib/rate-limit";
 import {
   LANGUAGES,
   MAX_CAFE_NAME_LENGTH,
@@ -194,68 +197,8 @@ const generationConfig: GenerationConfig = {
 /*  RATE LIMITING (per IP)                                                    */
 /* -------------------------------------------------------------------------- */
 
-type RateLimitResult = {
-  allowed: boolean;
-  limit: number;
-  remaining: number;
-  /** Unix seconds when the window resets. */
-  resetAt: number;
-  retryAfter: number;
-};
-
-const buckets = new Map<string, { count: number; resetAt: number }>();
-
-/**
- * Hashed IP keeps raw addresses out of memory/logs while still limiting.
- * Note: this is per serverless instance. For strict global limits on Vercel,
- * back this with Upstash Redis or Vercel KV.
- */
-function rateLimit(ip: string): RateLimitResult {
-  const key = createHash("sha256")
-    .update(`cafecaption:${ip}`)
-    .digest("hex")
-    .slice(0, 24);
-
-  const now = Date.now();
-  let bucket = buckets.get(key);
-
-  if (!bucket || bucket.resetAt <= now) {
-    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
-    buckets.set(key, bucket);
-  }
-
-  bucket.count += 1;
-
-  // Opportunistic cleanup so the map can't grow forever.
-  if (buckets.size > 1000) {
-    for (const [bucketKey, value] of buckets) {
-      if (value.resetAt <= now) buckets.delete(bucketKey);
-    }
-  }
-
-  const remaining = Math.max(0, RATE_LIMIT_MAX - bucket.count);
-
-  return {
-    allowed: bucket.count <= RATE_LIMIT_MAX,
-    limit: RATE_LIMIT_MAX,
-    remaining,
-    resetAt: Math.ceil(bucket.resetAt / 1000),
-    retryAfter: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
-  };
-}
-
-function clientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
-  return request.headers.get("x-real-ip") ?? "unknown";
-}
-
-function withRateHeaders(response: NextResponse, rate: RateLimitResult) {
-  response.headers.set("X-RateLimit-Limit", String(rate.limit));
-  response.headers.set("X-RateLimit-Remaining", String(rate.remaining));
-  response.headers.set("X-RateLimit-Reset", String(rate.resetAt));
-  return response;
-}
+/** Requests allowed per IP inside the window. */
+const LIMIT = { namespace: "generate", max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW_MS };
 
 /* -------------------------------------------------------------------------- */
 /*  HELPERS                                                                   */
@@ -374,7 +317,7 @@ function normalizeCaptions(payload: unknown): Caption[] {
 
 export async function POST(request: Request) {
   // 1. Per-IP rate limit before doing any expensive work.
-  const rate = rateLimit(clientIp(request));
+  const rate = rateLimit(request, LIMIT);
   if (!rate.allowed) {
     return fail(
       429,

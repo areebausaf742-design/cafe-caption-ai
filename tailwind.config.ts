@@ -18,13 +18,17 @@ const config: Config = {
           100: "#FDF5E9",
           200: "#F7EAD8",
           300: "#EFDCC3",
+          400: "#E6D3BA",
         },
         // Ink — roasted coffee bean browns
         espresso: {
           50: "#F6F1EC",
           100: "#E7DCD1",
+          200: "#D6C6B8",
           300: "#B3A192",
+          400: "#8F7764",
           500: "#6B5544",
+          600: "#5A4536",
           700: "#4A3527",
           800: "#332318",
           900: "#241812",

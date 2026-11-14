@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "CafeCaption AI",
+    name: "CafeCaption",
     short_name: "CafeCaption",
     description:
-      "Turn café photos into Instagram captions and hashtags in seconds, in English or Hinglish.",
+      "Instagram captions and hashtags for independent cafés, in English or Hinglish.",
     start_url: "/",
     display: "standalone",
     background_color: "#FDF5E9",

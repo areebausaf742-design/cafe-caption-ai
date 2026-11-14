@@ -45,11 +45,11 @@ export interface ApiError {
   retryAfter?: number;
 }
 
-export const TONES: { id: Tone; label: string; emoji: string; blurb: string }[] = [
-  { id: "cozy", label: "Cozy", emoji: "☕", blurb: "Warm and welcoming" },
-  { id: "aesthetic", label: "Aesthetic", emoji: "🌿", blurb: "Soft, editorial, minimal" },
-  { id: "playful", label: "Playful", emoji: "✨", blurb: "Fun and a little cheeky" },
-  { id: "promo", label: "Promo", emoji: "🔥", blurb: "Drives visits and orders" },
+export const TONES: { id: Tone; label: string; blurb: string }[] = [
+  { id: "cozy", label: "Cozy", blurb: "Warm, welcoming" },
+  { id: "aesthetic", label: "Editorial", blurb: "Soft, minimal" },
+  { id: "playful", label: "Playful", blurb: "Light, cheeky" },
+  { id: "promo", label: "Promotional", blurb: "Drives visits" },
 ];
 
 export const LANGUAGES: {
