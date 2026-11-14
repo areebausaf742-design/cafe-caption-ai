@@ -10,8 +10,14 @@
 /*  CONTACT                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Your email — shown in the contact section, footer and quote form fallback. */
-export const CONTACT_EMAIL = "areebausaf742@gmail.com";
+/**
+ * Your email — shown in the contact section, footer and structured data.
+ *
+ * ⚠️ This only works once the domain is live AND a mailbox (or forwarding rule)
+ * exists for it. Until then, enquiries sent here disappear silently. Swap back
+ * to "areebausaf742@gmail.com" for the launch week if forwarding isn't ready.
+ */
+export const CONTACT_EMAIL = "hello@cafecaption.tech";
 
 /** Your WhatsApp number: digits only, with country code, no "+" or spaces. */
 export const CONTACT_PHONE = "919044996869";
@@ -21,8 +27,14 @@ export const CONTACT_PHONE_DISPLAY = "+91 90449 96869";
 
 export const CONTACT_NAME = "Areeb";
 
-/** Shown under the contact cards. Edit to match your real availability. */
-export const RESPONSE_NOTE = "Replies within a few hours · 10am–9pm IST";
+/**
+ * Shown under the contact cards. Kept deliberately honest: a 24-hour promise
+ * that survives school hours beats a 2-hour promise that doesn't.
+ */
+export const RESPONSE_NOTE = "Replies within 24 hours · 10am–9pm IST";
+
+/** Same promise, short form, for places that need a single line. */
+export const RESPONSE_SHORT = "Replies within 24 hours";
 
 /**
  * ✏️  REPLACE THIS — your Cal.com link.
@@ -142,6 +154,75 @@ export const TRUST_POINTS = [
   "English & Hinglish",
   "Fixed pricing",
   "No apps to install",
+];
+
+/* -------------------------------------------------------------------------- */
+/*  ABOUT THE DEVELOPER                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The section above the footer.
+ *
+ * To use a real photo: drop a square image in `public/` (e.g. `public/areeb.jpg`)
+ * and set `photo: "/areeb.jpg"`. Until then the initials avatar is shown.
+ */
+export const ABOUT = {
+  name: "Areeb",
+  role: "Web developer & designer",
+  location: "Lucknow, India",
+  photo: null as string | null,
+  bio: "Hi, I'm Areeb. I'm a 15-year-old web developer based in Lucknow, specializing in AI automation and modern web design. I build high-converting digital tools for local businesses. When I'm not coding, I'm studying or building my next project.",
+  facts: [
+    { label: "Based in", value: "Lucknow, India" },
+    { label: "Replies within", value: "24 hours" },
+    { label: "Working with", value: "Cafés across India" },
+  ],
+} as const;
+
+/* -------------------------------------------------------------------------- */
+/*  RECENT WORK                                                               */
+/* -------------------------------------------------------------------------- */
+
+export interface WorkItem {
+  id: string;
+  title: string;
+  summary: string;
+  tags: string[];
+  status: "live" | "soon";
+  /** Optional link for live work. */
+  href?: string;
+}
+
+/**
+ * Honest social proof: one thing that actually exists, plus two in progress.
+ * Never relabel a "soon" card as a finished client project.
+ */
+export const RECENT_WORK: WorkItem[] = [
+  {
+    id: "cafecaption",
+    title: "CafeCaption",
+    summary:
+      "The site you're on. Caption studio, WhatsApp quote flow and three fixed-price packages, built and shipped in a week.",
+    tags: ["Next.js", "Brand + copy", "This site"],
+    status: "live",
+    href: "/#studio",
+  },
+  {
+    id: "bakery",
+    title: "Boutique Bakery Website",
+    summary:
+      "A menu-first site with daily specials and Instagram ordering for a neighbourhood bakery.",
+    tags: ["Website", "Menu", "Photography direction"],
+    status: "soon",
+  },
+  {
+    id: "gym",
+    title: "Local Gym Booking System",
+    summary:
+      "Trial-session bookings, WhatsApp reminders and a simple owner dashboard for a neighbourhood gym.",
+    tags: ["Booking", "Automation", "Dashboard"],
+    status: "soon",
+  },
 ];
 
 /**

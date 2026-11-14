@@ -41,9 +41,10 @@ export default function PrivacyPage() {
           </h2>
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
             <li>
-              <strong>Enquiry details</strong> — the name, café name, city,
-              WhatsApp number, optional email address and message you submit in
-              the contact form.
+              <strong>Enquiry details</strong> — the name, café name, city, what
+              you need and any notes you type into the quote form. The site does
+              not send or store these: the form opens WhatsApp with them filled
+              in, and you choose whether to send the message.
             </li>
             <li>
               <strong>Photo descriptions</strong> — the text you type into the
@@ -74,10 +75,26 @@ export default function PrivacyPage() {
             Who processes it
           </h2>
           <p className="mt-1.5">
-            The site is hosted on Vercel. Enquiries may be stored in Supabase,
-            and captions are generated using Google&apos;s Gemini API. These
+            The site is hosted on Vercel and captions are generated using
+            Google&apos;s Gemini API. Product analytics run on PostHog. These
             providers process data on our behalf. No other third party receives
             your details.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="font-display text-[16px] font-semibold text-espresso-900">
+            Analytics
+          </h2>
+          <p className="mt-1.5">
+            We use PostHog to count page views and four simple product events:
+            captions generated, something copied, quote form submitted, and a
+            button clicked (with the button&apos;s location and label). These
+            events never include names, phone numbers, email addresses or the
+            text you type. PostHog runs in memory-only mode here, so no cookies
+            or local storage are used, and nothing is kept after you close the
+            tab. Visitors with &ldquo;Do Not Track&rdquo; enabled are not tracked
+            at all.
           </p>
         </section>
 

@@ -3,7 +3,8 @@
    fonts once for the whole app, and Google Fonts is loaded via <link> so the
    build never depends on network access. */
 import type { Metadata, Viewport } from "next";
-import { Analytics } from "@vercel/analytics/next";
+
+import AnalyticsProvider from "@/components/AnalyticsProvider";
 
 import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
@@ -149,10 +150,11 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-dvh font-sans">
-        <SiteHeader />
-        {children}
-        <SiteFooter />
-      <Analytics />
+        <AnalyticsProvider>
+          <SiteHeader />
+          {children}
+          <SiteFooter />
+        </AnalyticsProvider>
       </body>
     </html>
   );

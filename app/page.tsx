@@ -1,11 +1,13 @@
 import { ArrowUpRight, CalendarDays, Mail, MessageCircle } from "lucide-react";
 
+import AboutDeveloper from "@/components/AboutDeveloper";
 import BookingLink from "@/components/BookingLink";
 import CaptionStudio from "@/components/CaptionStudio";
 import Faq from "@/components/Faq";
 import LeadForm from "@/components/LeadForm";
 import Packages from "@/components/Packages";
 import Process from "@/components/Process";
+import RecentWork from "@/components/RecentWork";
 import TrackedLink from "@/components/TrackedLink";
 import {
   BOOKING_NOTE,
@@ -109,6 +111,11 @@ export default function HomePage() {
           ))}
         </ul>
       </section>
+
+      {/* ---------------------------- recent work ---------------------------- */}
+      <div className="mx-auto mt-14 w-full max-w-5xl px-4 sm:mt-20 sm:px-6">
+        <RecentWork />
+      </div>
 
       {/* ------------------------------ packages ------------------------------ */}
       <div className="mx-auto mt-14 w-full max-w-5xl px-4 sm:mt-20 sm:px-6">
@@ -239,6 +246,9 @@ export default function HomePage() {
           <LeadForm />
         </div>
       </section>
+
+      {/* ------------------------------- about -------------------------------- */}
+      <AboutDeveloper />
     </main>
   );
 }
