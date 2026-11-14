@@ -46,6 +46,15 @@ export const dynamic = "force-dynamic";
 /** Vercel: allow up to 30s for the model to respond. */
 export const maxDuration = 30;
 
+/**
+ * Time budgets. The first attempt is cut off early so a hung upstream call
+ * fails fast; the single retry gets a longer leash because the model usually
+ * answers second time around. 8s + 20s = 28s, comfortably inside maxDuration.
+ */
+const FIRST_ATTEMPT_TIMEOUT_MS = 8_000;
+const RETRY_TIMEOUT_MS = 20_000;
+const MAX_ATTEMPTS = 2;
+
 /* -------------------------------------------------------------------------- */
 /*  CONFIG                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -221,6 +230,81 @@ function fail(
   return extra?.rate ? withRateHeaders(response, extra.rate) : response;
 }
 
+/** Raised when an attempt runs past its budget and is aborted. */
+class GenerationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Gemini did not respond within ${timeoutMs}ms.`);
+    this.name = "GenerationTimeoutError";
+  }
+}
+
+/** One bounded attempt. Aborts the request so the function returns, not hangs. */
+async function generateOnce(
+  prompt: string,
+  apiKey: string,
+  timeoutMs: number,
+) {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    systemInstruction: SYSTEM_INSTRUCTION,
+    generationConfig,
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await model.generateContent(prompt, { signal: controller.signal });
+  } catch (error) {
+    // The SDK surfaces an abort as a network error — report it as a timeout.
+    if (controller.signal.aborted) throw new GenerationTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Up to two attempts: fast first try, one slower retry. Throws the last error. */
+async function generateWithRetry(prompt: string, apiKey: string) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const timeoutMs =
+      attempt === 1 ? FIRST_ATTEMPT_TIMEOUT_MS : RETRY_TIMEOUT_MS;
+
+    try {
+      return await generateOnce(prompt, apiKey, timeoutMs);
+    } catch (error) {
+      lastError = error;
+
+      const status =
+        typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        typeof (error as { status?: unknown }).status === "number"
+          ? (error as { status: number }).status
+          : undefined;
+
+      const timedOut = error instanceof GenerationTimeoutError;
+      // Retry only what can plausibly succeed on a second try. A bad key or a
+      // malformed request will fail identically, so don't burn 20 more seconds.
+      const worthRetrying =
+        timedOut || status === undefined || status === 429 || status >= 500;
+
+      console.warn(
+        `[generate] attempt ${attempt}/${MAX_ATTEMPTS} failed (${timedOut ? "timeout" : `status ${status ?? "n/a"}`}):`,
+        error instanceof Error ? error.message : error,
+      );
+
+      if (!worthRetrying) throw error;
+      // Otherwise fall through to the next attempt; running out rethrows below.
+    }
+  }
+
+  throw lastError ?? new Error("Gemini call failed.");
+}
+
 /** Trim, collapse whitespace and cap length of optional user text. */
 function cleanOptional(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -382,16 +466,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // 4. Call Gemini.
+  // 4. Call Gemini — bounded by an 8s first attempt and one 20s retry.
   try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig,
-    });
-
-    const result = await model.generateContent(
+    const result = await generateWithRetry(
       buildUserPrompt({
         description: cleanDescription,
         tone: safeTone,
@@ -399,6 +476,7 @@ export async function POST(request: Request) {
         cafeName: cleanCafeName,
         city: cleanCity,
       }),
+      apiKey,
     );
 
     const response = result.response;
@@ -428,6 +506,23 @@ export async function POST(request: Request) {
     });
     return withRateHeaders(ok, rate);
   } catch (error) {
+    // Timed out twice — answer with something the visitor can act on.
+    if (error instanceof GenerationTimeoutError) {
+      console.error(
+        `[generate] timed out after ${MAX_ATTEMPTS} attempts (${FIRST_ATTEMPT_TIMEOUT_MS}ms + ${RETRY_TIMEOUT_MS}ms).`,
+      );
+      return fail(
+        504,
+        "The caption engine took too long to answer and the request was stopped.",
+        "TIMEOUT",
+        {
+          hint: "Try again in a few seconds. A shorter description usually comes back faster.",
+          retryAfter: 10,
+          rate,
+        },
+      );
+    }
+
     // The SDK throws an APIError with an HTTP status when Google returns one.
     const status =
       typeof error === "object" &&

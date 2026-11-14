@@ -1,17 +1,16 @@
 "use client";
 
-import { track as vercelTrack } from "@vercel/analytics";
-
 /**
  * Every conversion event the site sends, in one typed place.
  *
- * Vercel custom events accept at most two properties, so keep them small.
- * Nothing here ever carries personal data — no names, numbers or messages,
- * only what was clicked and in which context.
+ * Provider: PostHog (free under the GitHub Student Pack). It is loaded lazily
+ * by `components/AnalyticsProvider.tsx` and handed to `attachAnalytics()`, so
+ * the ~125 kB SDK never sits in the critical path for the caption studio.
  *
- * Note: Vercel records custom events on Pro/Enterprise plans. On Hobby the
- * calls are accepted and dropped — page views still work. Nothing breaks
- * either way, and switching plans needs no code change.
+ * Rules we hold ourselves to:
+ * - No personal data: no names, phone numbers, emails or message text.
+ * - Two properties per event, both describing the click, never the person.
+ * - No cookies: PostHog runs in memory-only mode (see the provider).
  */
 export type AnalyticsEvent =
   | { name: "generate"; props: { tone: string; source: "example" | "form" } }
@@ -19,15 +18,32 @@ export type AnalyticsEvent =
   | { name: "lead_submit"; props: { interest: string } }
   | { name: "cta_click"; props: { location: string; label: string } };
 
+/** Minimal surface we use, so this file doesn't import the SDK itself. */
+type AnalyticsClient = {
+  capture: (
+    event: string,
+    properties?: Record<string, string | number | boolean>,
+  ) => void;
+};
+
+let client: AnalyticsClient | null = null;
+
+/** Called by the provider once PostHog has finished loading. */
+export function attachAnalytics(next: AnalyticsClient): void {
+  client = next;
+}
+
 export function track({ name, props }: AnalyticsEvent): void {
-  try {
-    vercelTrack(name, props);
-  } catch {
-    // Analytics must never break a click.
+  if (process.env.NODE_ENV !== "production") {
+    // Handy while building: every event shows up in the console.
+    console.debug(`[analytics] ${name}`, props);
   }
 
-  if (process.env.NODE_ENV !== "production") {
-    // Handy while building: open the console to see events fire.
-    console.debug(`[analytics] ${name}`, props);
+  if (!client) return;
+
+  try {
+    client.capture(name, props);
+  } catch {
+    // Analytics must never break a click.
   }
 }

@@ -22,7 +22,9 @@ Gemini key is read only inside a `server-only` Route Handler.
 | How it works | Three-step process with a “book a free call” link |
 | FAQ | Native `<details>` accordion, also emitted as FAQ structured data |
 | Contact | Book a call, WhatsApp and email cards, plus the **“Get a quote in 24h”** form that opens a prefilled WhatsApp message |
-| Analytics | Vercel Web Analytics with `generate`, `copy`, `lead_submit` and `cta_click` events |
+| Recent work | Case study for this site + two honestly labelled “coming soon” builds |
+| About | Who you’re hiring: photo placeholder, short bio, location, reply time |
+| Analytics | PostHog page views + `generate`, `copy`, `lead_submit`, `cta_click` |
 | Footer | Contact details, legal links, plain-language disclosure |
 
 Every customer-facing string (packages, FAQs, phone, email, process) lives in
@@ -81,6 +83,17 @@ export const TESTIMONIALS = [];                     // hidden until you add real
 `BOOKING_URL` is the **single source** for every booking button — hero, process
 section, contact card and footer all read it, so one edit updates all four. The
 value above is a placeholder; swap in your real Cal.com (or Calendly) link.
+
+**Email:** `CONTACT_EMAIL` is `hello@cafecaption.tech`. That address only works
+once the domain is live *and* a mailbox or forwarding rule exists for it — until
+then, messages sent there vanish silently. Point it back at your Gmail for launch
+week if forwarding isn’t ready.
+
+**About + recent work:** `ABOUT` and `RECENT_WORK` live in the same file. Set
+`ABOUT.photo` to a file in `public/` (e.g. `"/areeb.jpg"`) once you have a square
+photo; the initials avatar renders until then. Work items with
+`status: "soon"` render a “Coming soon” card — never relabel one as a finished
+client project.
 
 **Prices** come from `PACKAGES` in the same file. The middle package carries
 `featured: true` and `badge: "Most popular"`, which is what gives it the dark
@@ -150,7 +163,14 @@ Optional café fields are sanitised (trimmed, control characters stripped,
 length-capped). Returns three captions with up to five normalised hashtags each.
 
 Errors: `400 VALIDATION_ERROR / INVALID_JSON`, `422 BLOCKED`, `429 RATE_LIMITED`
-(+`Retry-After`), `500 MISSING_API_KEY`, `502 UPSTREAM_* / GENERATION_FAILED`.
+(+`Retry-After`), `500 MISSING_API_KEY`, `504 TIMEOUT`, `502 UPSTREAM_* /
+GENERATION_FAILED`.
+
+**Timeouts.** Every attempt is wrapped in an `AbortController`: the first gets
+**8 s**, a single retry gets **20 s** (28 s total, inside `maxDuration = 30`). If
+both fail the route returns `504 TIMEOUT` with a hint instead of a hung function.
+Deterministic failures (bad key, malformed request) are **not** retried — only
+timeouts, `429`, `5xx` and network errors are.
 
 Rate limit: **12 requests / 10 min per IP**. Responses carry
 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
@@ -164,10 +184,19 @@ offer the WhatsApp handoff.
 
 ---
 
-## Analytics
+## Analytics (PostHog)
 
-`@vercel/analytics` is installed and `<Analytics />` renders from the root
-layout. Events are declared and sent through one helper — `lib/analytics.ts`:
+`posthog-js` is installed and initialised once by
+`components/AnalyticsProvider.tsx`, wrapped around the app in `app/layout.tsx`.
+Set the key and the site starts collecting; leave it blank and everything still
+works (events fall back to console logs in development).
+
+```bash
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com   # or https://eu.i.posthog.com
+```
+
+Every event is declared in `lib/analytics.ts` and fired through `track()`:
 
 | Event | Fires when | Properties |
 | --- | --- | --- |
@@ -176,12 +205,18 @@ layout. Events are declared and sent through one helper — `lib/analytics.ts`:
 | `lead_submit` | The quote form is submitted | `interest` |
 | `cta_click` | Any WhatsApp, email, booking or package CTA | `location`, `label` |
 
-No personal data is ever sent — no names, numbers or message text.
+Page views are captured too (`capture_pageview: true`).
 
-> **Plan note:** Vercel only records *custom events* on Pro/Enterprise. On Hobby
-> the calls are accepted and dropped (page views still work), so nothing breaks
-> and no code changes are needed if you upgrade. In `next dev` every event is
-> logged to the console as `[analytics] name {…}` so you can verify wiring.
+**Privacy defaults** — chosen deliberately, documented on `/privacy`:
+
+- `persistence: "memory"` → no cookies, no localStorage, so no consent banner.
+- `person_profiles: "identified_only"` → anonymous visitors stay anonymous.
+- `autocapture: false` → only the four declared events, never form contents.
+- `disable_session_recording: true` → no screen recording.
+- `respect_dnt: true` → visitors sending Do Not Track are ignored entirely.
+
+Add an event by extending the `AnalyticsEvent` union in `lib/analytics.ts` — the
+compiler then requires every call site to pass the right properties.
 
 ---
 
@@ -219,12 +254,15 @@ components/
   CaptionStudio.tsx        # the client tool (form, states, results, copy)
   LeadForm.tsx             # "Get a quote in 24h" → prefilled WhatsApp message
   BookingLink.tsx          # every "book a call" button, reads BOOKING_URL
+  RecentWork.tsx           # case study + "coming soon" grid, above Packages
+  AboutDeveloper.tsx       # bio block above the footer
+  AnalyticsProvider.tsx    # initialises PostHog once, privacy-first defaults
   TrackedLink.tsx          # <a> that reports a cta_click event
   Packages.tsx, Process.tsx, Faq.tsx
   SiteHeader.tsx, SiteFooter.tsx
 lib/
   business.ts              # ✏️ contact details, packages, booking link, copy
-  analytics.ts             # typed event catalogue (generate/copy/lead_submit/cta_click)
+  analytics.ts             # typed event catalogue → PostHog
   types.ts                 # shared request/response types, tones, languages
   leads.ts                 # lead validation shared by client + server
   rate-limit.ts            # hashed-IP limiter used by both API routes
