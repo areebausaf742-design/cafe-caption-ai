@@ -1,0 +1,407 @@
+import { NextResponse } from "next/server";
+import {
+  GoogleGenerativeAI,
+  SchemaType,
+  type GenerationConfig,
+} from "@google/generative-ai";
+
+import type {
+  ApiError,
+  Caption,
+  GenerateResponse,
+  Tone,
+} from "@/lib/types";
+import { MAX_DESCRIPTION_LENGTH, TONES } from "@/lib/types";
+
+/* -------------------------------------------------------------------------- */
+/*  ROUTE CONFIG                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** Gemini SDK needs the Node.js runtime (not Edge). */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+/** Vercel: allow up to 30s for the model to respond. */
+export const maxDuration = 30;
+
+/* -------------------------------------------------------------------------- */
+/*  CONFIG                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 🔑 Your Gemini API key is read here — on the server only.
+ *
+ *   1. Local dev  → put `GEMINI_API_KEY=...` in `.env.local`
+ *   2. Vercel     → Project → Settings → Environment Variables → add GEMINI_API_KEY
+ *
+ * Because the name does NOT start with NEXT_PUBLIC_, Next.js never bundles it
+ * into client JavaScript. Never rename it and never log it.
+ */
+const apiKey = process.env.GEMINI_API_KEY;
+
+/** Default model. Override with GEMINI_MODEL if you want a different one. */
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+/** Basic abuse guard: requests allowed per IP inside the window. */
+const RATE_LIMIT_MAX = 12;
+const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
+/* -------------------------------------------------------------------------- */
+/*  PROMPT ENGINEERING                                                        */
+/* -------------------------------------------------------------------------- */
+
+const SYSTEM_INSTRUCTION = `You are "CafeCaption", a senior social media strategist who writes Instagram copy for independent coffee shops, bakeries and cafes.
+
+House style:
+- Sound like a real cafe owner with personality — warm, sensory, specific. Never corporate, never generic.
+- Use concrete sensory details (steam, syrup, crumbs, sunlight, the hiss of the espresso machine).
+- Keep captions short and scannable: 1-3 short sentences, or 2 lines plus one call to action.
+- 0-2 emojis max per caption, used for rhythm, never decorative noise.
+- Each caption ends with a light call to action (save this, tag a friend, drop by, order ahead, link in bio).
+- Never invent prices, opening hours, addresses, or event dates that were not provided.
+
+Hashtag rules:
+- Exactly 5 hashtags per caption.
+- Blend 2 broad discovery tags (e.g. #cafelife, #coffeelover) with 2 niche/local tags (e.g. #specialtycoffee, #lattelove) and 1 campaign or vibe tag.
+- Lowercase, no spaces, no punctuation other than the leading "#".
+- Never repeat a hashtag across the three captions.
+
+Vary the three captions so the owner has real options:
+1. A warm storytelling / sensory caption.
+2. A short, punchy aesthetic or witty caption.
+3. A community / call-to-action caption that drives visits or saves.`;
+
+function toneDirection(tone: Tone): string {
+  switch (tone) {
+    case "aesthetic":
+      return "Tone: soft, editorial, minimal, aspirational. Think magazine caption — restrained, lowercase-friendly, lots of white space in the phrasing.";
+    case "playful":
+      return "Tone: playful and witty, cheeky but never cringe. Light wordplay is welcome.";
+    case "promo":
+      return "Tone: promotional and urgent without sounding like a billboard. Emphasise the offer, make ordering or visiting feel easy today.";
+    case "cozy":
+    default:
+      return "Tone: cozy, friendly and welcoming — like talking to a regular from behind the counter.";
+  }
+}
+
+function buildUserPrompt(description: string, tone: Tone): string {
+  return [
+    "Write Instagram captions and hashtags for the cafe photo described below.",
+    "",
+    `Photo description: """${description}"""`,
+    "",
+    toneDirection(tone),
+    "",
+    "Return exactly 3 captions. Use the most relevant tone details from the description, and keep every caption immediately postable — no placeholders, no square brackets, no explanations.",
+  ].join("\n");
+}
+
+/* -------------------------------------------------------------------------- */
+/*  RESPONSE SCHEMA (forces valid JSON out of Gemini)                         */
+/* -------------------------------------------------------------------------- */
+
+const responseSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    captions: {
+      type: SchemaType.ARRAY,
+      description: "Exactly three distinct Instagram captions.",
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          caption: {
+            type: SchemaType.STRING,
+            description: "The caption text, ready to post.",
+          },
+          hashtags: {
+            type: SchemaType.ARRAY,
+            description: "Exactly five hashtags, each starting with #.",
+            items: { type: SchemaType.STRING },
+          },
+        },
+        required: ["caption", "hashtags"],
+      },
+    },
+  },
+  required: ["captions"],
+} as const;
+
+const generationConfig: GenerationConfig = {
+  temperature: 0.95,
+  topP: 0.95,
+  maxOutputTokens: 1024,
+  responseMimeType: "application/json",
+  responseSchema: responseSchema as unknown as GenerationConfig["responseSchema"],
+};
+
+/* -------------------------------------------------------------------------- */
+/*  HELPERS                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function fail(
+  status: number,
+  error: string,
+  code: string,
+  hint?: string,
+) {
+  const body: ApiError = { error, code, ...(hint ? { hint } : {}) };
+  return NextResponse.json(body, { status });
+}
+
+/** Coarse per-IP limiter. Note: per serverless instance, not globally shared. */
+const hits = new Map<string, { count: number; resetAt: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = hits.get(ip);
+
+  if (!entry || entry.resetAt < now) {
+    hits.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    // Opportunistic cleanup so the map can't grow forever.
+    if (hits.size > 500) {
+      for (const [key, value] of hits) {
+        if (value.resetAt < now) hits.delete(key);
+      }
+    }
+    return false;
+  }
+
+  entry.count += 1;
+  return entry.count > RATE_LIMIT_MAX;
+}
+
+function clientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0]!.trim();
+  return request.headers.get("x-real-ip") ?? "unknown";
+}
+
+/** Pull a JSON object out of a model response, tolerating stray prose/fences. */
+function extractJson(raw: string): unknown {
+  const cleaned = raw
+    .replace(/^\s*```(?:json)?/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error("Model response did not contain JSON.");
+    }
+    return JSON.parse(cleaned.slice(start, end + 1));
+  }
+}
+
+/** Sanitise one hashtag: trim, strip spaces, guarantee a single leading "#". */
+function normalizeHashtag(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const bare = value
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/[^\p{L}\p{N}_]/gu, "")
+    .toLowerCase();
+  return bare ? `#${bare}` : null;
+}
+
+/** Validate + normalise the model output into exactly 3 captions / 5 tags each. */
+function normalizeCaptions(payload: unknown): Caption[] {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Unexpected model payload.");
+  }
+
+  const rawList = (payload as { captions?: unknown }).captions;
+  if (!Array.isArray(rawList)) {
+    throw new Error("Model payload is missing a captions array.");
+  }
+
+  const captions: Caption[] = [];
+
+  for (const item of rawList) {
+    if (typeof item !== "object" || item === null) continue;
+    const { caption, hashtags } = item as {
+      caption?: unknown;
+      hashtags?: unknown;
+    };
+
+    if (typeof caption !== "string" || !caption.trim()) continue;
+
+    // De-duplicate inside each caption (not across captions), so every caption
+    // keeps a full set of five even if the model repeats itself.
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const rawTag of Array.isArray(hashtags) ? hashtags : []) {
+      const tag = normalizeHashtag(rawTag);
+      if (tag && !seen.has(tag) && tags.length < 5) {
+        seen.add(tag);
+        tags.push(tag);
+      }
+    }
+
+    captions.push({
+      caption: caption.trim().slice(0, 600),
+      hashtags: tags,
+    });
+
+    if (captions.length === 3) break;
+  }
+
+  if (captions.length === 0) {
+    throw new Error("Model returned no usable captions.");
+  }
+
+  return captions;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  HANDLER                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export async function POST(request: Request) {
+  // 1. Rate limit before doing any expensive work.
+  if (isRateLimited(clientIp(request))) {
+    return fail(
+      429,
+      "You've generated a lot of captions in the last 10 minutes. Take a coffee break and try again shortly.",
+      "RATE_LIMITED",
+    );
+  }
+
+  // 2. Parse + validate the body.
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return fail(400, "Request body must be valid JSON.", "INVALID_JSON");
+  }
+
+  const { description, tone } = (body ?? {}) as {
+    description?: unknown;
+    tone?: unknown;
+  };
+
+  if (typeof description !== "string" || description.trim().length < 5) {
+    return fail(
+      400,
+      "Please describe your photo in a few words (at least 5 characters).",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    return fail(
+      400,
+      `Please keep your description under ${MAX_DESCRIPTION_LENGTH} characters.`,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const safeTone: Tone =
+    TONES.find((t) => t.id === tone)?.id ?? "cozy";
+  const cleanDescription = description.trim();
+
+  // 3. Fail fast and clearly if the key is missing (the #1 setup mistake).
+  if (!apiKey) {
+    console.error("[generate] GEMINI_API_KEY is not set.");
+    return fail(
+      500,
+      "The server is missing its Gemini API key, so captions can't be generated yet.",
+      "MISSING_API_KEY",
+      "Add GEMINI_API_KEY to .env.local (local) or Vercel → Settings → Environment Variables, then restart the server.",
+    );
+  }
+
+  // 4. Call Gemini.
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: MODEL,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig,
+    });
+
+    const result = await model.generateContent(
+      buildUserPrompt(cleanDescription, safeTone),
+    );
+
+    const response = result.response;
+
+    // Gemini can refuse a prompt (safety filters) before producing text.
+    const blockReason = response.promptFeedback?.blockReason;
+    if (blockReason) {
+      return fail(
+        422,
+        "The AI couldn't work with that description. Try describing the photo differently.",
+        "BLOCKED",
+        `Blocked by Gemini (${blockReason}).`,
+      );
+    }
+
+    const text = response.text();
+    const captions = normalizeCaptions(extractJson(text));
+
+    const payload: GenerateResponse = {
+      captions,
+      meta: { model: MODEL, tone: safeTone },
+    };
+
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    // The SDK throws an APIError with an HTTP status when Google returns one.
+    const status =
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof (error as { status?: unknown }).status === "number"
+        ? (error as { status: number }).status
+        : undefined;
+
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("[generate] Gemini call failed:", detail);
+
+    if (status === 429) {
+      return fail(
+        429,
+        "Gemini is receiving too many requests right now. Please try again in a minute.",
+        "UPSTREAM_RATE_LIMITED",
+      );
+    }
+
+    if (status === 400 || status === 403) {
+      return fail(
+        502,
+        "Gemini rejected the request. Double-check that your GEMINI_API_KEY is valid.",
+        "UPSTREAM_AUTH",
+      );
+    }
+
+    if (status === 404) {
+      return fail(
+        502,
+        `The model "${MODEL}" isn't available on this API key. Set GEMINI_MODEL to a supported model.`,
+        "UPSTREAM_MODEL_NOT_FOUND",
+      );
+    }
+
+    return fail(
+      502,
+      "The AI service didn't respond as expected. Please try again in a moment.",
+      "GENERATION_FAILED",
+      process.env.NODE_ENV === "development" ? detail : undefined,
+    );
+  }
+}
+
+/** Anything other than POST gets a clear, boring 405. */
+export async function GET() {
+  return fail(
+    405,
+    "This endpoint only accepts POST requests.",
+    "METHOD_NOT_ALLOWED",
+  );
+}
