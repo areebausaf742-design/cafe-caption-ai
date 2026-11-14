@@ -33,7 +33,7 @@ import {
  * (plus the mailto: link) updates everywhere. Example:
  *   const CONTACT_EMAIL = "areeb@yourdomain.com";
  */
-const CONTACT_EMAIL = "hello@yourdomain.com";
+const CONTACT_EMAIL = "areebausaf742@gmail.com";
 /* ========================================================================== */
 
 type Status = "idle" | "loading" | "success" | "error";
