@@ -82,6 +82,10 @@ const config: Config = {
           "0%": { transform: "scale(0.85)", opacity: "0" },
           "100%": { transform: "scale(1)", opacity: "1" },
         },
+        slide: {
+          "0%": { transform: "translateX(-110%)" },
+          "100%": { transform: "translateX(350%)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both",
@@ -89,6 +93,7 @@ const config: Config = {
         shimmer: "shimmer 1.6s infinite",
         steam: "steam 3.5s ease-in-out infinite",
         pop: "pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both",
+        slide: "slide 1.5s ease-in-out infinite",
       },
     },
   },
