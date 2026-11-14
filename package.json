@@ -1,0 +1,35 @@
+{
+  "name": "cafecaption-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered Instagram caption & hashtag generator for cafe owners.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "lucide-react": "^1.73.0",
+    "next": "^15.5.29",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.30.0",
+    "eslint-config-next": "^15.5.29",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}
