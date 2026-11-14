@@ -242,6 +242,28 @@ supabase/schema.sql        # leads table + insert-only RLS
 3. Deploy. Environment changes only apply to **new** deployments — redeploy
    after adding or editing variables.
 
+### Custom domain (do this before selling)
+
+A `*.vercel.app` link costs trust. Buy something short and sayable —
+`cafecaption.in` or `cafecaption.com` (~₹800/year) — then:
+
+1. **Vercel → Project → Settings → Domains → Add**, and enter the domain.
+2. Vercel shows the DNS records to create at your registrar:
+   - apex (`cafecaption.in`) → `A 76.76.21.21`
+   - `www` → `CNAME cname.vercel-dns.com`
+   Some registrars need only a nameserver change; Vercel prints the exact rows.
+3. Wait for **Valid Configuration** (SSL is issued automatically, usually in
+   minutes).
+4. Set `NEXT_PUBLIC_SITE_URL=https://cafecaption.in` in **Settings → Environment
+   Variables**, then **redeploy** — canonical URLs, `sitemap.xml`, `robots.txt`,
+   JSON-LD and the Open Graph image all read it.
+5. Pick one canonical host and let Vercel redirect the other (add
+   `www` → apex as a redirect, or the reverse — just be consistent in links).
+
+Nothing in the code hardcodes the Vercel URL: `lib/site.ts` reads
+`NEXT_PUBLIC_SITE_URL` and falls back to `VERCEL_PROJECT_PRODUCTION_URL`, so the
+switch is an environment change, not a code change.
+
 ---
 
 ## Before you sell

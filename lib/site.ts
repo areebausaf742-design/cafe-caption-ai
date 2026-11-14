@@ -4,8 +4,16 @@
  *
  * Set NEXT_PUBLIC_SITE_URL in production (e.g. https://cafecaption.in).
  */
+const configuredUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  // Vercel sets this at build time; it keeps canonical URLs correct even if
+  // NEXT_PUBLIC_SITE_URL was forgotten.
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "");
+
 export const siteUrl = (
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "http://localhost:3000"
+  configuredUrl.replace(/\/$/, "") || "http://localhost:3000"
 ).trim();
 
 export const siteName = "CafeCaption";
