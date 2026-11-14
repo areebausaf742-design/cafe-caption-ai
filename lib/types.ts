@@ -61,12 +61,27 @@ export const LANGUAGES: {
   { id: "hinglish", label: "Hinglish", blurb: "Hindi + English mix" },
 ];
 
-/** Quick-start examples shown under the textarea. */
-export const EXAMPLES: string[] = [
-  "Iced latte with a croissant on a wooden table",
-  "Freshly baked cinnamon rolls, morning light",
-  "Matcha latte and a book in a quiet corner",
-  "New cold brew launch, 20% off this weekend",
+/**
+ * Quick-start examples shown under the textarea.
+ * `label` keeps the chip tidy; `text` is what gets sent to the model.
+ */
+export const EXAMPLES: { label: string; text: string }[] = [
+  {
+    label: "Iced latte & croissant",
+    text: "Iced latte with a croissant on a wooden table",
+  },
+  {
+    label: "Cinnamon rolls",
+    text: "Freshly baked cinnamon rolls, morning light",
+  },
+  {
+    label: "Matcha & a book",
+    text: "Matcha latte and a book in a quiet corner",
+  },
+  {
+    label: "Cold brew launch",
+    text: "New cold brew launch, 20% off this weekend",
+  },
 ];
 
 export const MAX_DESCRIPTION_LENGTH = 400;

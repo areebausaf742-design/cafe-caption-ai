@@ -103,7 +103,7 @@ function PackageCard({ pkg }: { pkg: Package }) {
         ))}
       </ul>
 
-      <div className="mt-4 flex flex-col gap-1.5 pt-1">
+      <div className="mt-auto flex flex-col gap-1.5 pt-4">
         <a
           href={whatsappUrl(
             `Hi Areeb, I'm interested in the ${pkg.name} package (${formatINR(
