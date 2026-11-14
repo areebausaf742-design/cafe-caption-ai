@@ -1,13 +1,11 @@
 import { ImageResponse } from "next/og";
 
-import { siteDescription } from "@/lib/site";
-
 /**
  * Open Graph / Twitter preview image (1200×630).
  * Rendered at build time by Satori — no external assets or fonts needed.
  */
 export const alt =
-  "CafeCaption AI — three Instagram captions and five hashtags for your café in seconds";
+  "CafeCaption — Instagram captions for cafés, in English and Hinglish";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -34,17 +32,17 @@ export default function OpengraphImage() {
             style={{
               width: 64,
               height: 64,
-              borderRadius: 20,
+              borderRadius: 18,
               background: "#241812",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               color: "#EDBB7C",
-              fontSize: 30,
+              fontSize: 34,
               fontWeight: 700,
             }}
           >
-            CC
+            C
           </div>
           <div
             style={{
@@ -56,8 +54,7 @@ export default function OpengraphImage() {
               letterSpacing: -0.5,
             }}
           >
-            <span>CafeCaption</span>
-            <span style={{ color: "#A9632C" }}>AI</span>
+            CafeCaption
           </div>
           <div
             style={{
@@ -83,7 +80,7 @@ export default function OpengraphImage() {
                 display: "flex",
               }}
             />
-            Caption studio for café owners
+            Instagram studio for cafés
           </div>
         </div>
 
@@ -93,34 +90,33 @@ export default function OpengraphImage() {
             style={{
               display: "flex",
               flexWrap: "wrap",
-              fontSize: 78,
+              fontSize: 76,
               fontWeight: 700,
               letterSpacing: -3,
               lineHeight: 1.06,
-              maxWidth: 940,
+              maxWidth: 960,
             }}
           >
-            <span>Turn your café photos into</span>
-            <span style={{ color: "#A9632C", marginLeft: 20 }}>
-              captions that sell.
-            </span>
+            <span>Captions that make people</span>
+            <span style={{ color: "#A9632C", marginLeft: 20 }}>walk in.</span>
           </div>
           <div
             style={{
-              fontSize: 30,
+              fontSize: 29,
               lineHeight: 1.35,
               color: "#6B5544",
-              maxWidth: 820,
+              maxWidth: 840,
               display: "flex",
             }}
           >
-            {siteDescription.split(". ")[0]}. English or Hinglish.
+            Three considered captions and five researched hashtags — in English
+            or Hinglish.
           </div>
         </div>
 
         {/* hashtag pills */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {["#cafelife", "#latteart", "#hinglishcaptions", "#cafevibes"].map(
+          {["#cafelife", "#latteart", "#slowmornings", "#cafevibes"].map(
             (tag) => (
               <div
                 key={tag}
@@ -149,7 +145,7 @@ export default function OpengraphImage() {
               color: "#6B5544",
             }}
           >
-            3 captions · 5 hashtags
+            English · Hinglish
           </div>
         </div>
       </div>

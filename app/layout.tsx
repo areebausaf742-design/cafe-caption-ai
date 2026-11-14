@@ -4,6 +4,13 @@
    build never depends on network access. */
 import type { Metadata, Viewport } from "next";
 
+import SiteFooter from "@/components/SiteFooter";
+import SiteHeader from "@/components/SiteHeader";
+import {
+  CONTACT_EMAIL,
+  CONTACT_PHONE,
+  CONTACT_PHONE_DISPLAY,
+} from "@/lib/business";
 import { siteDescription, siteName, siteTitle, siteUrl } from "@/lib/site";
 
 import "./globals.css";
@@ -12,16 +19,11 @@ import "./globals.css";
 /*  SEO / SOCIAL METADATA                                                     */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Set NEXT_PUBLIC_SITE_URL in production (e.g. https://cafecaption.vercel.app)
- * so canonical URLs, the sitemap and the Open Graph image resolve correctly.
- * Add it in Vercel → Settings → Environment Variables.
- */
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
     default: siteTitle,
-    template: "%s · CafeCaption AI",
+    template: "%s · CafeCaption",
   },
   description: siteDescription,
   applicationName: siteName,
@@ -29,17 +31,17 @@ export const metadata: Metadata = {
     "cafe instagram captions",
     "coffee shop captions",
     "instagram caption generator",
-    "hashtag generator",
+    "hashtag generator for cafes",
     "hinglish captions",
-    "cafe marketing",
-    "bakery social media",
-    "restaurant captions",
-    "AI caption generator",
-    "instagram captions for cafes",
+    "cafe website design india",
+    "cafe marketing lucknow",
+    "digital menu qr code cafe",
+    "restaurant social media",
+    "bakery instagram captions",
   ],
   authors: [{ name: "Areeb", url: siteUrl }],
   creator: "Areeb",
-  publisher: "CafeCaption AI",
+  publisher: siteName,
   alternates: { canonical: "/" },
   category: "business",
   openGraph: {
@@ -48,13 +50,12 @@ export const metadata: Metadata = {
     siteName,
     title: siteTitle,
     description: siteDescription,
-    locale: "en_US",
+    locale: "en_IN",
   },
   twitter: {
     card: "summary_large_image",
     title: siteTitle,
     description: siteDescription,
-    creator: "@areeb",
   },
   robots: {
     index: true,
@@ -68,7 +69,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "CafeCaption AI",
+    title: siteName,
     statusBarStyle: "default",
   },
   formatDetection: { telephone: false },
@@ -83,28 +84,40 @@ export const viewport: Viewport = {
   colorScheme: "light",
 };
 
-/** Structured data helps Google show the tool with rich details. */
+/** Organisation + site data for search engines. */
 const jsonLd = {
   "@context": "https://schema.org",
-  "@type": "WebApplication",
-  name: siteName,
-  url: siteUrl,
-  description: siteDescription,
-  applicationCategory: "BusinessApplication",
-  operatingSystem: "Web",
-  inLanguage: ["en", "hi-Latn"],
-  offers: {
-    "@type": "Offer",
-    price: "0",
-    priceCurrency: "USD",
-  },
-  featureList: [
-    "AI Instagram captions for cafés",
-    "Five trending hashtags per caption",
-    "English and Hinglish captions",
-    "One-tap copy to clipboard",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${siteUrl}/#organization`,
+      name: siteName,
+      url: siteUrl,
+      email: CONTACT_EMAIL,
+      telephone: `+${CONTACT_PHONE}`,
+      description:
+        "Websites, digital menus and Instagram caption systems for independent cafés.",
+      areaServed: "IN",
+      founder: { "@type": "Person", name: "Areeb" },
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${siteUrl}/#website`,
+      url: siteUrl,
+      name: siteName,
+      description: siteDescription,
+      publisher: { "@id": `${siteUrl}/#organization` },
+      inLanguage: "en-IN",
+    },
+    {
+      "@type": "Person",
+      "@id": `${siteUrl}/#person`,
+      name: "Areeb",
+      telephone: CONTACT_PHONE_DISPLAY,
+      email: CONTACT_EMAIL,
+      worksFor: { "@id": `${siteUrl}/#organization` },
+    },
   ],
-  creator: { "@type": "Person", name: "Areeb" },
 };
 
 /* -------------------------------------------------------------------------- */
@@ -131,11 +144,14 @@ export default function RootLayout({
         />
         <script
           type="application/ld+json"
-          // JSON.stringify keeps this safe; content is a trusted constant.
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className="min-h-dvh font-sans">{children}</body>
+      <body className="min-h-dvh font-sans">
+        <SiteHeader />
+        {children}
+        <SiteFooter />
+      </body>
     </html>
   );
 }
