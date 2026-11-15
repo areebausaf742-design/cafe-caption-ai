@@ -113,6 +113,7 @@ export const PACKAGES: Package[] = [
       "Caption studio configured for your café",
       "WhatsApp ordering button",
       "Google Business Profile setup",
+      "Review replies + 4 local posts a month",
       "30 days of post-launch support",
     ],
   },
@@ -151,6 +152,7 @@ export const PROCESS_STEPS = [
 /** Neutral, verifiable trust points — no invented statistics. */
 export const TRUST_POINTS = [
   "Photo or text input",
+  "Instagram + Google, one studio",
   "Built for independent cafés",
   "English & Hinglish",
   "Fixed pricing",

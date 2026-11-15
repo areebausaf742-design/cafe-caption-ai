@@ -16,6 +16,34 @@ export interface Caption {
   hashtags: string[];
 }
 
+/** Which studio tool a request or response belongs to. */
+export type StudioTool = "captions" | "review_reply" | "google_post";
+
+/** Google review star rating, 1–5. */
+export type StarRating = 1 | 2 | 3 | 4 | 5;
+
+/** One reply option for a Google review. */
+export interface ReviewReply {
+  /** Strategy name, e.g. "Apologetic & Solution-Oriented". */
+  label: string;
+  /** The reply exactly as it should be published. */
+  text: string;
+}
+
+/** A Google Business Profile post, ready to paste. */
+export interface GooglePost {
+  /** Post subtitle, ≤ 60 characters. */
+  heading: string;
+  /** 100–150 word body, ending with the call to action. */
+  body: string;
+  /** That final call-to-action line on its own. */
+  callToAction: string;
+  /** Local-intent phrases the model actually used (2–4). */
+  keywords: string[];
+  /** Body length, for the "x / 1500" meter. */
+  characters: number;
+}
+
 /**
  * A photo, already downscaled and JPEG-compressed in the browser.
  * `data` is raw base64 with no `data:` prefix — exactly what Gemini's
@@ -27,32 +55,50 @@ export interface GenerateImage {
 }
 
 export interface GenerateRequest {
+  /** Which tool to run. Defaults to `captions`. */
+  type?: StudioTool;
   /**
-   * What the photo shows. Required for text-only requests; optional (used as
-   * extra context) when a photo is attached.
+   * `captions`: what the photo shows. Required for text-only requests; optional
+   * (used as extra context) when a photo is attached.
    */
   description?: string;
   tone?: Tone;
   /** Optional: the café's name, woven in naturally. */
   cafeName?: string;
-  /** Optional: city, used for local flavour / local hashtags. */
+  /** Optional: city, used for local flavour / local hashtags / local SEO. */
   city?: string;
-  /** Optional: caption language. Defaults to English. */
+  /** Optional: output language. Defaults to English. */
   language?: Language;
-  /** Optional: the photo to describe. At least one of this or `description`. */
+  /** `captions` only: the photo to describe. */
   image?: GenerateImage;
+  /** `review_reply` only: the customer's review, pasted in full. */
+  review?: string;
+  /** `review_reply` only: the star rating the reviewer gave. */
+  rating?: StarRating;
+  /** `review_reply` only: a private channel offered to unhappy reviewers. */
+  contact?: string;
+  /** `google_post` only: what the post is about. */
+  topic?: string;
 }
 
-export interface GenerateResponse {
-  captions: Caption[];
-  meta: {
-    model: string;
-    tone: Tone;
-    language: Language;
-    /** True when the captions were written from an uploaded photo. */
-    hasImage: boolean;
-  };
+/** Fields every response carries. */
+export interface ResponseMeta {
+  model: string;
+  tone: Tone;
+  language: Language;
+  tool: StudioTool;
+  /** `captions` only: true when an uploaded photo drove the captions. */
+  hasImage?: boolean;
 }
+
+/**
+ * The response is a discriminated union on `tool`, so the client can't read
+ * `replies` off a captions response — the type system enforces the contract.
+ */
+export type GenerateResponse =
+  | { tool: "captions"; captions: Caption[]; meta: ResponseMeta }
+  | { tool: "review_reply"; replies: ReviewReply[]; meta: ResponseMeta }
+  | { tool: "google_post"; post: GooglePost; meta: ResponseMeta };
 
 export interface ApiError {
   error: string;
@@ -121,6 +167,31 @@ export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /** Base64 payload ceiling the API accepts, in characters (~1.5 MB of JPEG). */
 export const MAX_IMAGE_BASE64_LENGTH = 2_100_000;
+
+/* -------------------------------------------------------------------------- */
+/*  Google Local SEO limits                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Longest review we will process (Google's own reviews are capped well below). */
+export const MAX_REVIEW_LENGTH = 1_500;
+/** Shorter than this and there is nothing to reply to. */
+export const MIN_REVIEW_LENGTH = 10;
+
+/** Longest "what is this post about" brief. */
+export const MAX_TOPIC_LENGTH = 200;
+export const MIN_TOPIC_LENGTH = 4;
+
+/** Google's hard limit for a Business Profile post. */
+export const GOOGLE_POST_MAX_CHARS = 1_500;
+
+/** Human labels for the star selector. */
+export const RATING_LABELS: Record<StarRating, string> = {
+  1: "1 star · very unhappy",
+  2: "2 stars · unhappy",
+  3: "3 stars · mixed",
+  4: "4 stars · happy",
+  5: "5 stars · delighted",
+};
 
 /** Image types Gemini can read. Anything else is a 415. */
 export const ALLOWED_IMAGE_TYPES = [

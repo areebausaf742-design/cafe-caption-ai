@@ -18,7 +18,8 @@ export const siteUrl = (
 
 export const siteName = "CafeCaption";
 
-export const siteTitle = "CafeCaption — Instagram captions for cafés, in seconds";
+export const siteTitle =
+  "CafeCaption — Instagram captions & Google local SEO for cafés";
 
 export const siteDescription =
-  "Upload a café photo or describe it, and get three considered Instagram captions with five researched hashtags each — in English or Hinglish. Websites, digital menus and caption systems for independent cafés.";
+  "Upload a café photo or describe it and get three considered Instagram captions with five researched hashtags each. Paste a Google review and get three replies, or write a 100–150 word Google Business Profile post that ranks locally — in English or Hinglish.";
