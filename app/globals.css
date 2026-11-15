@@ -8,6 +8,11 @@
   --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", sans-serif;
+
+  /* Warm light used by the hero glow and card hairlines */
+  --amber-glow: 237, 187, 124;
+  --caramel: 201, 128, 60;
+  --ink: 36, 24, 18;
 }
 
 @layer base {
@@ -19,12 +24,21 @@
   body {
     @apply bg-cream-100 text-espresso-900 antialiased;
     font-family: var(--font-sans);
+    /* Body copy breathes: 1.65 line-height is the floor everywhere. */
+    line-height: 1.65;
+    text-rendering: optimizeLegibility;
+    /* The studio goes edge-to-edge on phones; clip anything that leans out. */
+    overflow-x: clip;
     /* Warm, layered light: amber steam top-left, cocoa shadow bottom-right */
     background-image:
       radial-gradient(60rem 45rem at 6% -12%, rgba(237, 187, 124, 0.26), transparent 60%),
       radial-gradient(48rem 40rem at 94% 6%, rgba(183, 199, 165, 0.2), transparent 62%),
       radial-gradient(55rem 45rem at 50% 112%, rgba(74, 53, 39, 0.13), transparent 65%);
     background-attachment: fixed;
+  }
+
+  p {
+    line-height: 1.65;
   }
 
   ::selection {
@@ -50,79 +64,138 @@
 }
 
 @layer components {
+  /* ---------------------------------------------------------------- surfaces */
+
+  /* Hairline "warm gradient" border: a 1px ring that catches light at the
+     top-left and fades to nothing, instead of a flat grey line. */
+  .hairline {
+    position: relative;
+  }
+  .hairline::before,
+  .paper::before,
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      152deg,
+      rgba(var(--amber-glow), 0.85) 0%,
+      rgba(var(--ink), 0.14) 28%,
+      rgba(var(--ink), 0.06) 62%,
+      rgba(var(--caramel), 0.38) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
   /* Frosted paper card used for the main studio surface */
   .paper {
-    @apply rounded-[1.75rem] border border-espresso-900/10 bg-cream-50/80
-      shadow-card backdrop-blur-xl sm:rounded-[2rem];
+    @apply hairline relative rounded-[1.75rem] bg-cream-50/85 backdrop-blur-xl
+      sm:rounded-[2rem];
+    box-shadow:
+      0 1px 2px rgba(var(--ink), 0.04),
+      0 18px 40px -24px rgba(var(--ink), 0.28),
+      0 60px 120px -60px rgba(var(--caramel), 0.45);
   }
+
+  .card {
+    @apply hairline relative rounded-2xl bg-cream-50/80 backdrop-blur-sm sm:rounded-3xl;
+    box-shadow:
+      0 1px 2px rgba(var(--ink), 0.03),
+      0 14px 34px -22px rgba(var(--ink), 0.22);
+  }
+
+  /* --------------------------------------------------------------- typography */
 
   /* Small caps section eyebrow with a hairline rule */
   .label {
     @apply inline-flex items-center gap-2.5 text-[10px] font-semibold uppercase
-      tracking-[0.18em] text-espresso-500 sm:text-[10.5px];
+      tracking-[0.2em] text-espresso-500 sm:text-[10.5px];
   }
   .label::before {
     content: "";
-    @apply block h-px w-6 bg-espresso-900/25;
+    @apply block h-px w-6 bg-gradient-to-r from-caramel-400 to-espresso-900/20;
   }
 
   .section-title {
-    @apply text-balance font-display text-[1.6rem] font-semibold leading-[1.12]
-      tracking-tight text-espresso-900 sm:text-[2.1rem];
+    @apply text-balance font-display text-[1.8rem] font-semibold leading-[1.08]
+      tracking-[-0.02em] text-espresso-900 sm:text-[2.4rem];
   }
 
   .section-lead {
-    @apply max-w-xl text-pretty text-[13.5px] leading-relaxed text-espresso-600
-      sm:text-[15px];
+    @apply max-w-[46ch] text-pretty text-[14px] leading-[1.7] text-espresso-600
+      sm:text-[15.5px];
   }
 
-  .card {
-    @apply rounded-2xl border border-espresso-900/10 bg-cream-50/70 backdrop-blur-sm
-      sm:rounded-3xl;
+  /* Body copy inside dense surfaces (studio, cards) */
+  .body-sm {
+    @apply text-[13px] leading-[1.65] text-espresso-600 sm:text-[13.5px];
   }
+
+  /* --------------------------------------------------------------- form bits */
 
   .field {
-    @apply w-full resize-none rounded-xl border border-espresso-900/15 bg-white/75 px-3.5 py-3
-      text-base leading-relaxed text-espresso-900 placeholder:text-espresso-500/55
-      shadow-sm outline-none transition
+    @apply w-full resize-none rounded-xl border border-espresso-900/[0.14] bg-white/75 px-3.5 py-3
+      text-base leading-[1.65] text-espresso-900 placeholder:text-espresso-500/55
+      shadow-sm outline-none transition duration-200
       hover:border-espresso-900/25
       focus:border-caramel-400 focus:bg-white focus:ring-4 focus:ring-caramel-400/15
       disabled:opacity-60;
   }
 
   .input {
-    @apply w-full rounded-xl border border-espresso-900/15 bg-white/75 px-3.5 py-2.5
+    @apply min-h-[44px] w-full rounded-xl border border-espresso-900/[0.14] bg-white/75 px-3.5 py-2.5
       text-base text-espresso-900 placeholder:text-espresso-500/55
-      outline-none transition
+      outline-none transition duration-200
       hover:border-espresso-900/25
       focus:border-caramel-400 focus:bg-white focus:ring-4 focus:ring-caramel-400/15
       disabled:opacity-60 sm:text-[14.5px];
   }
 
+  /* ---------------------------------------------------------------- controls */
+
   .btn-primary {
-    @apply inline-flex w-full items-center justify-center gap-2 rounded-xl
-      bg-espresso-900 px-5 py-3.5 text-[14px] font-semibold text-cream-50
-      shadow-lift transition
-      hover:-translate-y-0.5 hover:bg-espresso-800 hover:shadow-glow
+    @apply inline-flex min-h-[52px] w-full origin-center items-center justify-center gap-2
+      rounded-xl bg-espresso-900 px-5 py-3.5 text-[14px] font-semibold text-cream-50
+      shadow-lift transition-[transform,background-color,box-shadow,color] duration-200 ease-out
+      hover:scale-[1.02] hover:bg-espresso-800 hover:shadow-glow
       focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-caramel-500/40
-      active:translate-y-0 active:scale-[0.995]
-      disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0
+      active:scale-[0.975] active:duration-100
+      disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100
       disabled:hover:shadow-lift;
   }
 
   .btn-dark {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-espresso-900
-      px-3 py-2 text-[12px] font-semibold text-cream-50 transition
-      hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2
-      focus-visible:ring-caramel-500/40 sm:px-4 sm:py-2.5 sm:text-[12.5px];
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-espresso-900
+      px-3 py-2 text-[12px] font-semibold text-cream-50
+      transition-[transform,background-color,box-shadow,color] duration-200 ease-out
+      hover:scale-[1.02] hover:bg-espresso-800 hover:shadow-[0_10px_26px_-12px_rgba(36,24,18,0.55)]
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40
+      active:scale-[0.97] sm:min-h-10 sm:px-4 sm:py-2.5 sm:text-[12.5px];
   }
 
   .btn-outline {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border
       border-espresso-900/15 bg-white/60 px-3 py-2 text-[12px] font-semibold
-      text-espresso-800 transition hover:border-espresso-900/30 hover:bg-white
+      text-espresso-800 transition duration-200 ease-out
+      hover:scale-[1.02] hover:border-espresso-900/30 hover:bg-white
       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40
-      sm:px-4 sm:py-2.5 sm:text-[12.5px];
+      active:scale-[0.97] sm:min-h-10 sm:px-4 sm:py-2.5 sm:text-[12.5px];
+  }
+
+  /* Press-and-release feel for every tappable chip / icon button */
+  .tap {
+    @apply transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out
+      active:scale-[0.96] active:duration-100;
   }
 
   .tag {
@@ -131,16 +204,41 @@
   }
 
   .pill {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-espresso-900/10
+    @apply inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-espresso-900/10
       bg-white/60 px-3 py-1.5 text-xs font-medium text-espresso-700
-      transition hover:border-caramel-400/60 hover:bg-caramel-100/70
+      transition duration-200
+      hover:border-caramel-400/60 hover:bg-caramel-100/70
       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40
-      active:scale-[0.98];
+      active:scale-[0.97];
   }
 
   .hashtag {
     @apply rounded-md bg-caramel-100 px-2 py-0.5 text-[10.5px] font-semibold
       tracking-tight text-caramel-600 sm:text-xs;
+  }
+
+  /* -------------------------------------------------- skeleton / shimmer */
+
+  .skeleton-block {
+    @apply rounded-full bg-espresso-900/[0.08];
+  }
+
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.72) 50%,
+      transparent 100%
+    );
+    animation: shimmer 1.7s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
   /* Thin, warm scrollbar for long captions */
@@ -154,5 +252,29 @@
   .pretty-scroll::-webkit-scrollbar-thumb {
     background-color: rgba(107, 85, 68, 0.28);
     border-radius: 999px;
+  }
+}
+
+@layer utilities {
+  /* Hero light — three soft pools of caramel/amber behind the headline */
+  .glow-warm {
+    background:
+      radial-gradient(
+        closest-side,
+        rgba(var(--amber-glow), 0.55),
+        rgba(var(--amber-glow), 0) 100%
+      );
+    filter: blur(18px);
+  }
+
+  .text-shadow-soft {
+    text-shadow: 0 1px 1px rgba(255, 251, 245, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer::after {
+    animation: none;
+    opacity: 0;
   }
 }

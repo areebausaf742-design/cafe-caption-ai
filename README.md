@@ -251,6 +251,8 @@ app/
   opengraph-image.tsx      # generated social card
   robots.ts, sitemap.ts, manifest.ts
 components/
+  motion/MotionRoot.tsx    # LazyMotion provider — animation features load async
+  motion/Reveal.tsx        # staggered fade-up on scroll-into-view (framer-motion)
   CaptionStudio.tsx        # the client tool (form, states, results, copy)
   LeadForm.tsx             # "Get a quote in 24h" → prefilled WhatsApp message
   BookingLink.tsx          # every "book a call" button, reads BOOKING_URL
@@ -269,6 +271,71 @@ lib/
   site.ts                  # site URL + SEO copy
 supabase/schema.sql        # leads table + insert-only RLS
 ```
+
+---
+
+## Design system (the "premium" layer)
+
+The visual language is defined in `app/globals.css` + `tailwind.config.ts`, so a
+restyle means editing two files, not thirty components.
+
+**Type & rhythm**
+
+| Token | Use |
+| --- | --- |
+| `.label` | eyebrow: 10px, `0.2em` tracking, hairline dash before it |
+| `.section-title` | 1.8rem → 2.4rem display serif, `-0.02em` tracking, 1.08 leading |
+| `.section-lead` | 14 → 15.5px, 1.7 line-height, capped at `46ch` for readability |
+| `.body-sm` | 13 → 13.5px body copy inside dense surfaces |
+| Sections | `mt-16` mobile / `mt-28` desktop (`SECTION` const in `app/page.tsx`) |
+
+**Surface & light**
+
+- `.hairline` — 1px ring painted with a warm gradient (caramel at the top-left,
+  fading to near-nothing) via a `mask-composite` pseudo-element. Used on cards,
+  panels and the studio, in place of flat grey borders.
+- `.paper` — the studio surface: translucent cream + `backdrop-blur-xl` and a
+  three-layer diffused shadow (contact shadow + soft spread + amber bloom).
+- `.glow-warm` — the soft caramel pool behind the hero headline.
+- Header — frosted glass (`bg-cream-100/70 backdrop-blur-xl backdrop-saturate-150`)
+  closed with a gradient hairline.
+
+**Motion**
+
+- `framer-motion` is installed but **never** blocks first paint: `MotionRoot`
+  wraps the app in `LazyMotion` with `features={() => import("framer-motion")}`,
+  so only the ~18 kB `m` renderer is in the initial JS and the ~70 kB (gzip)
+  animation feature bundle arrives in its own async chunk.
+- `Reveal` gives sections their staggered fade-up (`whileInView`, `once: true`).
+  The hero is CSS-only on purpose: above-the-fold content should paint with the
+  stylesheet, not wait for JavaScript.
+- Every interactive control carries a press state (`active:scale-[0.97]`, or
+  `whileTap` for the copy buttons), `prefers-reduced-motion` is honoured in both
+  CSS and the `Reveal`/`usePrefersReducedMotion` pair, and `<noscript>` keeps
+  revealed sections visible if JavaScript never runs.
+- Loading states are shimmering skeletons shaped like the real caption cards —
+  header line, three body lines, five hashtag pills, two action circles.
+
+**Mobile**
+
+- The studio is full-bleed below `sm` (`-mx-4 rounded-none`), so it fills the
+  screen the way a native sheet would.
+- Every tap target is at least 44×44 px: copy buttons (`h-11 w-11`), tone chips,
+  language buttons, package CTAs, nav and footer links, inputs (`.input`).
+
+**Bundle budget** — `npm run build` after this overhaul:
+
+```
+Route (app)                                 Size  First Load JS
+┌ ○ /                                    21.1 kB         140 kB
++ First Load JS shared by all             103 kB
+```
+
+Baseline before the overhaul was 14.8 kB / 122 kB. The +18 kB is framer-motion's
+`m` renderer only; the feature bundle (200 kB raw / 70 kB gzip) is an async
+chunk, and PostHog (356 kB) is still loaded lazily. If you ever need the 122 kB
+back, swap `Reveal` for a CSS + `IntersectionObserver` component — it is the
+only file that imports framer-motion apart from `MotionRoot` and the copy buttons.
 
 ---
 

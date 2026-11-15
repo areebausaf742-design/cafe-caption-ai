@@ -9,11 +9,11 @@ type Variant = "primary" | "outline" | "inline";
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    "inline-flex items-center justify-center gap-2 rounded-xl bg-espresso-900 px-4 py-2.5 text-[12.5px] font-semibold text-cream-50 shadow-sm transition hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40",
+    "inline-flex min-h-[44px] origin-center items-center justify-center gap-2 rounded-xl bg-espresso-900 px-4 py-2.5 text-[12.5px] font-semibold text-cream-50 shadow-[0_10px_26px_-16px_rgba(36,24,18,0.85)] transition-[transform,background-color,box-shadow] duration-200 ease-out hover:scale-[1.02] hover:bg-espresso-800 hover:shadow-[0_16px_34px_-16px_rgba(201,128,60,0.65)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40 active:scale-[0.97] active:duration-100",
   outline:
-    "inline-flex items-center justify-center gap-2 rounded-xl border border-espresso-900/15 bg-white/60 px-4 py-2.5 text-[12.5px] font-semibold text-espresso-800 transition hover:border-espresso-900/30 hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40",
+    "inline-flex min-h-[44px] origin-center items-center justify-center gap-2 rounded-xl border border-espresso-900/15 bg-white/60 px-4 py-2.5 text-[12.5px] font-semibold text-espresso-800 transition-[transform,background-color,border-color,box-shadow] duration-200 ease-out hover:scale-[1.02] hover:border-espresso-900/30 hover:bg-white/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40 active:scale-[0.97] active:duration-100",
   inline:
-    "inline-flex items-center gap-1.5 text-[12px] font-semibold text-espresso-800 underline decoration-caramel-500/40 decoration-1 underline-offset-4 transition hover:text-espresso-900 hover:decoration-caramel-500",
+    "inline-flex min-h-[44px] items-center gap-1.5 text-[12px] font-semibold text-espresso-800 underline decoration-caramel-500/40 decoration-1 underline-offset-4 transition hover:text-espresso-900 hover:decoration-caramel-500",
 };
 
 /**

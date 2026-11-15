@@ -5,6 +5,7 @@
 import type { Metadata, Viewport } from "next";
 
 import AnalyticsProvider from "@/components/AnalyticsProvider";
+import MotionRoot from "@/components/motion/MotionRoot";
 
 import SiteFooter from "@/components/SiteFooter";
 import SiteHeader from "@/components/SiteHeader";
@@ -148,12 +149,19 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        {/* Without JS the reveal wrappers would never animate themselves in,
+            so keep every section visible in that case. */}
+        <noscript>
+          <style>{`[data-reveal]{opacity:1 !important;transform:none !important}`}</style>
+        </noscript>
       </head>
       <body className="min-h-dvh font-sans">
         <AnalyticsProvider>
-          <SiteHeader />
-          {children}
-          <SiteFooter />
+          <MotionRoot>
+            <SiteHeader />
+            {children}
+            <SiteFooter />
+          </MotionRoot>
         </AnalyticsProvider>
       </body>
     </html>
