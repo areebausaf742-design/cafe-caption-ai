@@ -33,7 +33,7 @@ const serviceLd = {
   name: "CafeCaption",
   url: siteUrl,
   description:
-    "Websites, digital menus, Instagram captions and Google local SEO for independent cafés, in English and Hinglish.",
+    "Websites, digital menu and QR generation, Instagram captions and Google local SEO for independent cafés, in English and Hinglish.",
   email: CONTACT_EMAIL,
   telephone: `+${CONTACT_PHONE}`,
   areaServed: "IN",
@@ -103,10 +103,11 @@ export default function HomePage() {
             className="animate-fade-up mx-auto mt-5 max-w-[46ch] text-pretty text-[14px] leading-[1.7] text-espresso-600 sm:text-[15.5px]"
             style={{ animationDelay: "120ms" }}
           >
-            Two tools, one studio. Upload a photo — or just describe it — for
-            three considered captions with five researched hashtags. Paste a
-            Google review for three replies, or write a Business Profile post
-            that ranks locally. English or Hinglish, ready to post.
+            Three tools, one studio. Upload a photo — or just describe it — for
+            three considered captions. Paste a Google review for three replies,
+            write a Business Profile post that ranks locally, or turn a photo of
+            your printed menu into a digital one with its own QR code. English or
+            Hinglish, ready to post.
           </p>
         </div>
 

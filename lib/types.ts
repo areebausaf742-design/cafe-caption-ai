@@ -17,7 +17,7 @@ export interface Caption {
 }
 
 /** Which studio tool a request or response belongs to. */
-export type StudioTool = "captions" | "review_reply" | "google_post";
+export type StudioTool = "captions" | "review_reply" | "google_post" | "digital_menu";
 
 /** Google review star rating, 1–5. */
 export type StarRating = 1 | 2 | 3 | 4 | 5;
@@ -42,6 +42,26 @@ export interface GooglePost {
   keywords: string[];
   /** Body length, for the "x / 1500" meter. */
   characters: number;
+}
+
+/** One line of a digitised menu. */
+export interface MenuItem {
+  /** Section it sits under, e.g. "Beverages" or "Sandwiches". */
+  category: string;
+  /** The dish or drink exactly as printed. */
+  name: string;
+  /** Price as printed, with its currency symbol ("₹180"). */
+  price: string;
+}
+
+/** A menu read off a photo, ready to render. */
+export interface DigitalMenu {
+  /** Every item, in reading order, categories kept together. */
+  items: MenuItem[];
+  /** Unique category names in the order they appeared. */
+  categories: string[];
+  /** Distinct category count, for the summary line. */
+  categoryCount: number;
 }
 
 /**
@@ -69,7 +89,10 @@ export interface GenerateRequest {
   city?: string;
   /** Optional: output language. Defaults to English. */
   language?: Language;
-  /** `captions` only: the photo to describe. */
+  /**
+   * `captions`: the photo to describe. `digital_menu`: required — the photo of
+   * the printed menu. Other tools ignore it.
+   */
   image?: GenerateImage;
   /** `review_reply` only: the customer's review, pasted in full. */
   review?: string;
@@ -98,7 +121,8 @@ export interface ResponseMeta {
 export type GenerateResponse =
   | { tool: "captions"; captions: Caption[]; meta: ResponseMeta }
   | { tool: "review_reply"; replies: ReviewReply[]; meta: ResponseMeta }
-  | { tool: "google_post"; post: GooglePost; meta: ResponseMeta };
+  | { tool: "google_post"; post: GooglePost; meta: ResponseMeta }
+  | { tool: "digital_menu"; menu: DigitalMenu; meta: ResponseMeta };
 
 export interface ApiError {
   error: string;
@@ -192,6 +216,18 @@ export const RATING_LABELS: Record<StarRating, string> = {
   4: "4 stars · happy",
   5: "5 stars · delighted",
 };
+
+/* -------------------------------------------------------------------------- */
+/*  Digital menu limits                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Fewer than this from a menu photo means the model didn't really read it. */
+export const MIN_MENU_ITEMS = 3;
+/** Beyond this a "menu" is probably a price list the length of a book. */
+export const MAX_MENU_ITEMS = 200;
+export const MAX_MENU_ITEM_NAME = 80;
+export const MAX_MENU_PRICE = 24;
+export const MAX_MENU_CATEGORY = 40;
 
 /** Image types Gemini can read. Anything else is a 415. */
 export const ALLOWED_IMAGE_TYPES = [

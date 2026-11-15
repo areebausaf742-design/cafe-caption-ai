@@ -34,6 +34,7 @@ import {
 import { track } from "@/lib/analytics";
 import PhotoDropzone from "@/components/PhotoDropzone";
 import LocalSeoStudio from "@/components/LocalSeoStudio";
+import dynamic from "next/dynamic";
 import StudioTabs, { type StudioTab } from "@/components/studio/StudioTabs";
 import CopyIconButton from "@/components/studio/CopyIconButton";
 import {
@@ -43,6 +44,16 @@ import {
   type PreparedImage,
 } from "@/lib/image";
 import { usePrefersReducedMotion } from "@/components/motion/usePrefersReducedMotion";
+
+/**
+ * The menu tab is the only tool that ships a QR renderer, so its chunk is
+ * loaded when the tab is opened instead of on first paint — the caption studio,
+ * which most visitors use, stays at its old weight.
+ */
+const DigitalMenuStudio = dynamic(() => import("@/components/DigitalMenu"), {
+  ssr: false,
+  loading: () => <MenuTabSkeleton />,
+});
 
 const TEXT_LOADING_STEPS = [
   "Reading the details…",
@@ -57,6 +68,13 @@ const PHOTO_LOADING_STEPS = [
 ] as const;
 
 const LOADING_STEP_COUNT = TEXT_LOADING_STEPS.length;
+
+/** One line per tab, so the studio never looks like the same page twice. */
+const STUDIO_HEADINGS: Record<StudioTab, string> = {
+  captions: "Three options, ready to post.",
+  seo: "Win the local search.",
+  menu: "Your menu, on every phone.",
+};
 
 const SAMPLE = {
   caption:
@@ -357,9 +375,7 @@ export default function CaptionStudio() {
             Studio
           </p>
           <h2 className="mt-1.5 font-display text-[18px] font-semibold leading-snug tracking-[-0.01em] text-espresso-900 sm:text-[21px]">
-            {tab === "captions"
-              ? "Three options, ready to post."
-              : "Win the local search."}
+            {STUDIO_HEADINGS[tab]}
           </h2>
         </div>
         <span className="tag hidden shrink-0 sm:inline-flex">Free · no account</span>
@@ -868,7 +884,7 @@ export default function CaptionStudio() {
             )}
           </div>
         </m.div>
-      ) : (
+      ) : tab === "seo" ? (
         <m.div
           key="seo"
           id="studio-panel-seo"
@@ -888,8 +904,37 @@ export default function CaptionStudio() {
             onLanguage={setLanguage}
           />
         </m.div>
+      ) : (
+        <m.div
+          key="menu"
+          id="studio-panel-menu"
+          role="tabpanel"
+          aria-labelledby="studio-tab-menu"
+          initial={reduced ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <DigitalMenuStudio cafeName={cafeName} />
+        </m.div>
       )}
 
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Lazy-tab skeleton — same shape as the menu tab, so nothing jumps          */
+/* -------------------------------------------------------------------------- */
+
+function MenuTabSkeleton() {
+  return (
+    <div aria-hidden className="shimmer relative">
+      <div className="hairline flex min-h-[116px] w-full flex-col items-center justify-center gap-2 rounded-xl bg-white/45">
+        <div className="h-10 w-10 rounded-full bg-caramel-100" />
+        <div className="skeleton-block h-3 w-48" />
+        <div className="skeleton-block h-2 w-32" />
+      </div>
+      <div className="mt-4 h-[46px] w-full rounded-xl bg-espresso-900/[0.08] sm:w-56" />
     </div>
   );
 }

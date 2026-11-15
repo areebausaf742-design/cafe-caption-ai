@@ -51,6 +51,15 @@ export const BOOKING_LABEL = "Book a free call";
 /** Small print under booking CTAs. */
 export const BOOKING_NOTE = "20 minutes · no slides, no pressure";
 
+/**
+ * Where the generated QR code points.
+ *
+ * ✏️  DEMO FOR NOW — this is the placeholder the digital-menu tab prints into
+ * its QR code. A real order puts the café's own live menu URL here (that is
+ * part of the ₹10,000 Café Launch Kit), so keep it as one constant.
+ */
+export const MENU_DEMO_URL = "https://cafecaption.tech/menu/demo";
+
 /** Build a WhatsApp deep link with a pre-filled message. */
 export function whatsappUrl(message: string): string {
   return `https://wa.me/${CONTACT_PHONE}?text=${encodeURIComponent(message)}`;
@@ -152,7 +161,7 @@ export const PROCESS_STEPS = [
 /** Neutral, verifiable trust points — no invented statistics. */
 export const TRUST_POINTS = [
   "Photo or text input",
-  "Instagram + Google, one studio",
+  "Instagram, Google & menus",
   "Built for independent cafés",
   "English & Hinglish",
   "Fixed pricing",
