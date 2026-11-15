@@ -1,10 +1,13 @@
 # CafeCaption
 
-**Instagram captions for independent cafés — and the studio behind them.**
+**Instagram captions and Google local SEO for independent cafés — and the studio
+behind them.**
 
-A free caption tool (describe a photo → three captions + five hashtags, English or
-Hinglish) that doubles as the sales page for websites, digital menus and caption
-systems, with packages, FAQs, lead capture and WhatsApp/email contact.
+One free studio, three tools: a photo or description → three captions + five
+hashtags; a pasted Google review → three replies; a one-line brief → a 100–150
+word Business Profile post (English or Hinglish). It doubles as the sales page
+for websites, digital menus and caption systems, with packages, FAQs, lead
+capture and WhatsApp/email contact.
 
 Built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS**,
 **Lucide icons**, **Google Gemini** and an optional **Supabase** lead store. The
@@ -17,14 +20,14 @@ Gemini key is read only inside a `server-only` Route Handler.
 | Section | Purpose |
 | --- | --- |
 | Sticky header | Wordmark, anchor nav, WhatsApp CTA |
-| Hero + caption studio | The free tool: photo description, café name, city, language, tone, copy buttons, regenerate, plus one-tap examples and a sample result shown before the first click |
+| Hero + studio | The free tool, in two tabs. **Instagram captions**: photo or description, café name, city, language, tone, copy buttons, regenerate, one-tap examples and a sample result before the first click. **Google Local SEO**: review responder (paste a review + 1–5★ → three replies with different strategies) and Google post generator (one-line brief → 100–150 word local post with a character meter) |
 | Packages | Three fixed-price offers (₹4,999 / **₹10,000 “Most popular”** / ₹18,500), each with a WhatsApp CTA |
 | How it works | Three-step process with a “book a free call” link |
 | FAQ | Native `<details>` accordion, also emitted as FAQ structured data |
 | Contact | Book a call, WhatsApp and email cards, plus the **“Get a quote in 24h”** form that opens a prefilled WhatsApp message |
 | Recent work | Case study for this site + two honestly labelled “coming soon” builds |
 | About | Who you’re hiring: photo placeholder, short bio, location, reply time |
-| Analytics | PostHog page views + `generate`, `copy`, `lead_submit`, `cta_click` |
+| Analytics | PostHog page views + `generate`, `seo_generate`, `copy`, `lead_submit`, `cta_click` |
 | Footer | Contact details, legal links, plain-language disclosure |
 
 Every customer-facing string (packages, FAQs, phone, email, process) lives in
@@ -148,8 +151,11 @@ from public.leads order by created_at desc;
 
 ### `POST /api/generate`
 
+One endpoint, three tools, picked by `type` (defaults to `captions`).
+
 ```json
 {
+  "type": "captions",
   "description": "Iced latte with a croissant on a wooden table",
   "tone": "cozy",
   "cafeName": "The Daily Grind",
@@ -159,9 +165,42 @@ from public.leads order by created_at desc;
 }
 ```
 
-`tone` = `cozy | aesthetic | playful | promo`, `language` = `english | hinglish`.
-Optional café fields are sanitised (trimmed, control characters stripped,
-length-capped). Returns three captions with up to five normalised hashtags each.
+```json
+{
+  "type": "review_reply",
+  "review": "Lovely place but my cold brew took 25 minutes and the staff seemed annoyed.",
+  "rating": 2,
+  "contact": "hello@yourcafe.in",
+  "cafeName": "The Daily Grind",
+  "city": "Lucknow",
+  "language": "english"
+}
+```
+
+```json
+{
+  "type": "google_post",
+  "topic": "New winter menu launch",
+  "tone": "promo",
+  "cafeName": "The Daily Grind",
+  "city": "Lucknow",
+  "language": "english"
+}
+```
+
+`tone` = `cozy | aesthetic | playful | promo`, `language` = `english | hinglish`,
+`rating` = `1 | 2 | 3 | 4 | 5`. Optional café fields are sanitised (trimmed,
+control characters stripped, length-capped). `description` is capped at 400
+characters, `review` at 1,500, `topic` at 200, `contact` at 120.
+
+Responses are a **discriminated union on `tool`**, so a client can't read
+`replies` off a captions response:
+
+```json
+{ "tool": "captions", "captions": [{ "caption": "…", "hashtags": ["#cafe"] }], "meta": { "model": "…", "tone": "cozy", "language": "english", "hasImage": false } }
+{ "tool": "review_reply", "replies": [{ "label": "Warm & Inviting", "text": "…" }], "meta": { … } }
+{ "tool": "google_post", "post": { "heading": "…", "body": "…", "callToAction": "…", "keywords": ["best cafe in Lucknow"], "characters": 812 }, "meta": { … } }
+```
 
 `image` is optional. **Either `description` or `image` is required** — with a
 photo, the description becomes an optional note (“focus on the pastries”) that
@@ -223,6 +262,49 @@ payloads and retired models.
 Rate limit: **12 requests / 10 min per IP**, plus a tighter **6 photo requests
 / 10 min** bucket, because images cost far more upstream quota than text.
 Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+
+### Google Local SEO prompts (`app/api/generate/prompts.ts`)
+
+All prompts, schemas and normalisers live in one server-only module, so the
+route handler stays about transport and the copy quality lives in one file.
+
+**Review responder.** The system prompt is written as a reputation manager with
+hard rules, not vibes:
+
+| rule | why it matters |
+| --- | --- |
+| Never defensive, never explain away the complaint | the reply is read by every future customer, not just the reviewer |
+| 1–2★ → apologise, own it, offer one concrete fix, invite them back | recovery is the whole point of replying to a bad review |
+| Ask unhappy reviewers to continue privately (`contact`, e.g. an email) | refunds and details don't belong in public |
+| 4–5★ → thank them warmly and **name the specific items they praised** | proves a human read it |
+| 3★ → acknowledge both the good and the bad | the balanced case most tools get wrong |
+| No invented facts, no discounts, no legal admissions on serious claims | a reply is a public commitment |
+| Same language as the review, 50–90 words, no hashtags, no links, at most one emoji | paste-and-publish |
+
+Three replies come back with **three different strategies** — the label sets
+switch with the rating (`Professional & Grateful` / `Warm & Inviting` /
+`Apologetic & Solution-Oriented` for 1–2★, and warmer variants for 3★+), so the
+owner picks a tone rather than re-rolling the dice. Replies are plain text:
+markdown, quotes and "Dear reviewer" scaffolding are stripped server-side.
+
+**Google post generator.** Written as a local SEO specialist:
+
+- 100–150 words (the model is asked for a hook, a concrete detail, a local line
+  and a CTA); responses under 80 words are rejected and retried rather than
+  shipped thin
+- local-intent phrasing woven into sentences — *“the best cafe in {city}”*,
+  *“freshly baked pastries near me”* — one phrase per sentence, never stacked
+- a heading under 60 characters, 2–4 emojis, no hashtags (Google posts don't
+  use them) and one clear call to action
+- the whole post is clamped to Google's 1,500-character ceiling, trimming at a
+  sentence boundary rather than mid-word; `characters` is returned so the UI can
+  show a live meter
+- the model reports the local phrases it actually used, so the UI can show them
+  as chips and the owner can see the SEO work
+
+Because `/api/generate` runs the same attempt ladder for every tool, a slow or
+overloaded model degrades exactly the same way for a review reply as it does for
+a caption.
 
 ### Photo upload (vision)
 
@@ -321,7 +403,8 @@ they match how you actually operate (payments, refunds, data retention).
 
 ```
 app/
-  api/generate/route.ts    # server-only Gemini endpoint
+  api/generate/route.ts    # server-only Gemini endpoint: transport, ladder, errors
+  api/generate/prompts.ts  # every prompt, schema and normaliser (captions/reviews/posts)
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
@@ -331,7 +414,11 @@ app/
 components/
   motion/MotionRoot.tsx    # LazyMotion provider — animation features load async
   motion/Reveal.tsx        # staggered fade-up on scroll-into-view (framer-motion)
-  CaptionStudio.tsx        # the client tool (form, states, results, copy)
+  CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
+  LocalSeoStudio.tsx       # Google tab: review responder + post generator
+  studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
+  studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
+  studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
   LeadForm.tsx             # "Get a quote in 24h" → prefilled WhatsApp message
   BookingLink.tsx          # every "book a call" button, reads BOOKING_URL
   RecentWork.tsx           # case study + "coming soon" grid, above Packages
@@ -346,6 +433,7 @@ lib/
   types.ts                 # shared request/response types, tones, languages
   leads.ts                 # lead validation shared by client + server
   rate-limit.ts            # hashed-IP limiter used by both API routes
+  studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy
 supabase/schema.sql        # leads table + insert-only RLS
 ```

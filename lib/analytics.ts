@@ -9,7 +9,8 @@
  *
  * Rules we hold ourselves to:
  * - No personal data: no names, phone numbers, emails or message text.
- * - Two properties per event, both describing the click, never the person.
+ * - Properties describe the click or the tool, never the person. Review text,
+ *   customer names and email addresses are never sent.
  * - No cookies: PostHog runs in memory-only mode (see the provider).
  */
 export type AnalyticsEvent =
@@ -29,7 +30,19 @@ export type AnalyticsEvent =
         outcome: "ready" | "rejected";
       };
     }
-  | { name: "copy"; props: { kind: "caption" | "hashtags" | "all" } }
+  | {
+      name: "seo_generate";
+      props: {
+        /** Which Local SEO tool ran. */
+        tool: "review_reply" | "google_post";
+        /** Star rating for a review reply; 0 for a Google post. */
+        rating: number;
+      };
+    }
+  | {
+      name: "copy";
+      props: { kind: "caption" | "hashtags" | "all" | "reply" | "post" | "post_cta" };
+    }
   | { name: "lead_submit"; props: { interest: string } }
   | { name: "cta_click"; props: { location: string; label: string } };
 

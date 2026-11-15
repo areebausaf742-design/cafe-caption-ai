@@ -33,7 +33,7 @@ const serviceLd = {
   name: "CafeCaption",
   url: siteUrl,
   description:
-    "Websites, digital menus and Instagram caption systems for independent cafés, in English and Hinglish.",
+    "Websites, digital menus, Instagram captions and Google local SEO for independent cafés, in English and Hinglish.",
   email: CONTACT_EMAIL,
   telephone: `+${CONTACT_PHONE}`,
   areaServed: "IN",
@@ -87,7 +87,9 @@ export default function HomePage() {
         </div>
 
         <div className="text-center">
-          <span className="label animate-fade-up">Instagram studio for independent cafés</span>
+          <span className="label animate-fade-up">
+            Caption studio & Google local SEO for cafés
+          </span>
 
           <h1
             className="animate-fade-up mx-auto mt-5 max-w-[19ch] text-balance font-display text-[2.15rem] font-semibold leading-[1.05] tracking-[-0.025em] text-espresso-900 text-shadow-soft sm:max-w-2xl sm:text-[3.4rem]"
@@ -101,9 +103,10 @@ export default function HomePage() {
             className="animate-fade-up mx-auto mt-5 max-w-[46ch] text-pretty text-[14px] leading-[1.7] text-espresso-600 sm:text-[15.5px]"
             style={{ animationDelay: "120ms" }}
           >
-            Upload a photo from your café — or just describe it — and get three
-            considered captions with five researched hashtags, in English or
-            Hinglish, ready to post.
+            Two tools, one studio. Upload a photo — or just describe it — for
+            three considered captions with five researched hashtags. Paste a
+            Google review for three replies, or write a Business Profile post
+            that ranks locally. English or Hinglish, ready to post.
           </p>
         </div>
 
