@@ -154,7 +154,8 @@ from public.leads order by created_at desc;
   "tone": "cozy",
   "cafeName": "The Daily Grind",
   "city": "Lucknow",
-  "language": "hinglish"
+  "language": "hinglish",
+  "image": { "mimeType": "image/jpeg", "data": "<base64, no data: prefix>" }
 }
 ```
 
@@ -162,12 +163,19 @@ from public.leads order by created_at desc;
 Optional café fields are sanitised (trimmed, control characters stripped,
 length-capped). Returns three captions with up to five normalised hashtags each.
 
+`image` is optional. **Either `description` or `image` is required** — with a
+photo, the description becomes an optional note (“focus on the pastries”) that
+the model treats as extra context rather than the whole brief.
+
 Errors carry a machine-readable `code` **and** a short `reason` tag, so a
 failure is never a mystery:
 
 | code | status | meaning |
 | --- | --- | --- |
 | `VALIDATION_ERROR` / `INVALID_JSON` | 400 | the request was unusable |
+| `INVALID_IMAGE` | 400 | the photo wasn't valid base64 / had no data |
+| `UNSUPPORTED_IMAGE` | 415 | not a JPEG, PNG, WebP, HEIC or HEIF |
+| `IMAGE_TOO_LARGE` | 413 | base64 payload over ~1.5 MB (compression was skipped) |
 | `BLOCKED` | 422 | Gemini refused the description (safety) |
 | `RATE_LIMITED` | 429 | this visitor's 12/10 min budget ran out |
 | `MISSING_API_KEY` | 500 | `GEMINI_API_KEY` isn't set |
@@ -180,21 +188,25 @@ failure is never a mystery:
 | `EMPTY_OUTPUT` | 502 | a 200 with nothing postable in it (usually a truncated reply) |
 | `GENERATION_FAILED` | 502 | anything else |
 
-**Attempt ladder.** Every call is wrapped in an `AbortController`:
+**Attempt ladder.** Every call is wrapped in an `AbortController`, and photo
+requests get more time on each rung because image tokens take longer to read:
 
-| rung | model | budget |
-| --- | --- | --- |
-| 1 | `GEMINI_MODEL` (default `gemini-2.5-flash`) | 8 s |
-| 2 | same model | 12 s |
-| 3 | `GEMINI_FALLBACK_MODEL` (default `gemini-2.0-flash`) | 8 s |
+| rung | model | text | photo |
+| --- | --- | --- | --- |
+| 1 | `GEMINI_MODEL` (default `gemini-2.5-flash`) | 8 s | 12 s |
+| 2 | same model | 12 s | 16 s |
+| 3 | `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`) | 10 s | 12 s |
 
-28 s total, inside `maxDuration = 30`. A retired model id also triggers one extra
-attempt on Google's `gemini-flash-latest` alias, but only if enough of the budget
-is left.
+30 s for text and 40 s for photos, inside `maxDuration = 45` (the browser waits
+70 s, so the server always gets to answer with a real error code first). If every
+model 404s — a retired id, a typo in `GEMINI_MODEL` — one extra attempt goes to
+`gemini-3.8-flash`, but only while there is budget left.
+
+Every rung is multimodal, so photo upload needs no separate vision model.
 
 What gets retried: timeouts, `429`, `5xx`, network errors, empty replies and
 half-written JSON. What doesn't: a safety block, or a rejected key (`400/403`
-with "API key not valid") — retrying those just burns 28 s and quota.
+with "API key not valid") — retrying those just burns the budget and quota.
 
 **Thinking budget.** Gemini 2.5 models charge reasoning tokens to the same
 `maxOutputTokens` budget as the answer, which is how a request can return
@@ -208,8 +220,37 @@ production) to a local mock and the SDK will call it instead of Google — that'
 how every rung of the ladder above was verified, including overloads, empty
 payloads and retired models.
 
-Rate limit: **12 requests / 10 min per IP**. Responses carry
-`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+Rate limit: **12 requests / 10 min per IP**, plus a tighter **6 photo requests
+/ 10 min** bucket, because images cost far more upstream quota than text.
+Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+
+### Photo upload (vision)
+
+The visitor can upload a photo instead of typing. The heavy lifting happens in
+the browser (`lib/image.ts`) before anything is sent:
+
+| step | detail |
+| --- | --- |
+| type check | must be `image/*`; SVG is rejected |
+| size check | 5 MB hard limit on the original file |
+| decode | `createImageBitmap`, falling back to `<img>` for stubborn formats |
+| downscale | long edge → **1024 px** (Gemini tiles larger images; extra pixels cost tokens and add nothing) |
+| compress | JPEG at quality 0.82 → 0.70 → 0.60 → 0.50, then 820 / 640 / 384 px if needed, until under **1 MB** |
+| send | base64 JPEG as an `inlineData` part, image first and instructions second |
+
+A 12 MP phone photo typically lands at 150–400 KB, i.e. well under Vercel's
+4.5 MB request-body limit — which is the whole point: the original file would
+have been a 413 or a timeout.
+
+The server never trusts that. It re-checks the MIME type against an allowlist,
+verifies the payload really is base64, tolerates (and strips) a stray
+`data:` prefix, and rejects anything over ~1.5 MB with `413 IMAGE_TOO_LARGE`.
+
+The prompt switches with the input: for a photo the model is told to *look*
+first — noting the food, the light, the setting, the mood — to ground every
+caption in what is visibly there, and never to invent dishes, prices or events.
+The image is treated as evidence, never as instructions, so text baked into a
+photo can't hijack the prompt.
 
 ### `POST /api/leads`
 
@@ -236,7 +277,8 @@ Every event is declared in `lib/analytics.ts` and fired through `track()`:
 
 | Event | Fires when | Properties |
 | --- | --- | --- |
-| `generate` | A caption set comes back successfully | `tone`, `source` (`example` / `form`) |
+| `generate` | A caption set comes back successfully | `tone`, `source` (`example` / `form`), `has_image` |
+| `photo_upload` | A photo is accepted (or rejected) by the dropzone | `outcome` (`ready` / `rejected`) |
 | `copy` | A caption, hashtag set or “copy all” succeeds | `kind` |
 | `lead_submit` | The quote form is submitted | `interest` |
 | `cta_click` | Any WhatsApp, email, booking or package CTA | `location`, `label` |

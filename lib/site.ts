@@ -21,4 +21,4 @@ export const siteName = "CafeCaption";
 export const siteTitle = "CafeCaption — Instagram captions for cafés, in seconds";
 
 export const siteDescription =
-  "Describe a café photo and get three considered Instagram captions with five researched hashtags each — in English or Hinglish. Websites, digital menus and caption systems for independent cafés.";
+  "Upload a café photo or describe it, and get three considered Instagram captions with five researched hashtags each — in English or Hinglish. Websites, digital menus and caption systems for independent cafés.";
