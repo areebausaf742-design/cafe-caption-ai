@@ -13,7 +13,22 @@
  * - No cookies: PostHog runs in memory-only mode (see the provider).
  */
 export type AnalyticsEvent =
-  | { name: "generate"; props: { tone: string; source: "example" | "form" } }
+  | {
+      name: "generate";
+      props: {
+        tone: string;
+        source: "example" | "form";
+        /** True when the captions were written from an uploaded photo. */
+        has_image: boolean;
+      };
+    }
+  | {
+      name: "photo_upload";
+      props: {
+        /** `ready` = accepted and compressed, `rejected` = wrong type/size. */
+        outcome: "ready" | "rejected";
+      };
+    }
   | { name: "copy"; props: { kind: "caption" | "hashtags" | "all" } }
   | { name: "lead_submit"; props: { interest: string } }
   | { name: "cta_click"; props: { location: string; label: string } };

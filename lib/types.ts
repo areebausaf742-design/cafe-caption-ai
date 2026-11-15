@@ -16,8 +16,22 @@ export interface Caption {
   hashtags: string[];
 }
 
+/**
+ * A photo, already downscaled and JPEG-compressed in the browser.
+ * `data` is raw base64 with no `data:` prefix — exactly what Gemini's
+ * `inlineData` part expects.
+ */
+export interface GenerateImage {
+  mimeType: string;
+  data: string;
+}
+
 export interface GenerateRequest {
-  description: string;
+  /**
+   * What the photo shows. Required for text-only requests; optional (used as
+   * extra context) when a photo is attached.
+   */
+  description?: string;
   tone?: Tone;
   /** Optional: the café's name, woven in naturally. */
   cafeName?: string;
@@ -25,6 +39,8 @@ export interface GenerateRequest {
   city?: string;
   /** Optional: caption language. Defaults to English. */
   language?: Language;
+  /** Optional: the photo to describe. At least one of this or `description`. */
+  image?: GenerateImage;
 }
 
 export interface GenerateResponse {
@@ -33,6 +49,8 @@ export interface GenerateResponse {
     model: string;
     tone: Tone;
     language: Language;
+    /** True when the captions were written from an uploaded photo. */
+    hasImage: boolean;
   };
 }
 
@@ -93,3 +111,23 @@ export const EXAMPLES: { label: string; text: string }[] = [
 export const MAX_DESCRIPTION_LENGTH = 400;
 export const MAX_CAFE_NAME_LENGTH = 60;
 export const MAX_CITY_LENGTH = 40;
+
+/* -------------------------------------------------------------------------- */
+/*  Photo upload limits                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Largest file the browser will accept before compression (5 MB). */
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+/** Base64 payload ceiling the API accepts, in characters (~1.5 MB of JPEG). */
+export const MAX_IMAGE_BASE64_LENGTH = 2_100_000;
+
+/** Image types Gemini can read. Anything else is a 415. */
+export const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+] as const;
+

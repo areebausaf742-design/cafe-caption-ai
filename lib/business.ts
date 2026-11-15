@@ -150,10 +150,10 @@ export const PROCESS_STEPS = [
 
 /** Neutral, verifiable trust points — no invented statistics. */
 export const TRUST_POINTS = [
+  "Photo or text input",
   "Built for independent cafés",
   "English & Hinglish",
   "Fixed pricing",
-  "No apps to install",
 ];
 
 /* -------------------------------------------------------------------------- */

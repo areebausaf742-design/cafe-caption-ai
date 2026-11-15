@@ -101,8 +101,9 @@ export default function HomePage() {
             className="animate-fade-up mx-auto mt-5 max-w-[46ch] text-pretty text-[14px] leading-[1.7] text-espresso-600 sm:text-[15.5px]"
             style={{ animationDelay: "120ms" }}
           >
-            Describe a photo from your café. Get three considered captions and
-            five researched hashtags — in English or Hinglish, ready to post.
+            Upload a photo from your café — or just describe it — and get three
+            considered captions with five researched hashtags, in English or
+            Hinglish, ready to post.
           </p>
         </div>
 

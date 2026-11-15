@@ -33,13 +33,28 @@ import {
   type Tone,
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import PhotoDropzone from "@/components/PhotoDropzone";
+import {
+  ImagePrepError,
+  prepareImage,
+  releaseImage,
+  type PreparedImage,
+} from "@/lib/image";
 import { usePrefersReducedMotion } from "@/components/motion/usePrefersReducedMotion";
 
-const LOADING_STEPS = [
+const TEXT_LOADING_STEPS = [
   "Reading the details…",
   "Writing three captions…",
   "Choosing the hashtags…",
 ] as const;
+
+const PHOTO_LOADING_STEPS = [
+  "Looking at your photo…",
+  "Writing three captions…",
+  "Choosing the hashtags…",
+] as const;
+
+const LOADING_STEP_COUNT = TEXT_LOADING_STEPS.length;
 
 const SAMPLE = {
   caption:
@@ -63,6 +78,10 @@ export default function CaptionStudio() {
   const [city, setCity] = useState("");
   const [showDetails, setShowDetails] = useState(false);
 
+  const [image, setImage] = useState<PreparedImage | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [preparingImage, setPreparingImage] = useState(false);
+
   const [status, setStatus] = useState<Status>("idle");
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [error, setError] = useState<UiError | null>(null);
@@ -75,6 +94,8 @@ export default function CaptionStudio() {
 
   const isLoading = status === "loading";
   const remaining = MAX_DESCRIPTION_LENGTH - description.length;
+  const hasPhoto = Boolean(image);
+  const loadingSteps = hasPhoto ? PHOTO_LOADING_STEPS : TEXT_LOADING_STEPS;
 
   const detailCount = useMemo(
     () =>
@@ -93,11 +114,13 @@ export default function CaptionStudio() {
     }) => {
       const text = (override?.description ?? description).trim();
       const activeTone = override?.tone ?? tone;
+      // A photo carries the request on its own; text becomes optional context.
+      const photo = image;
 
-      if (text.length < 5) {
+      if (!photo && text.length < 5) {
         setError({
-          message: "Tell us a little about the photo first.",
-          hint: "For example: “Iced latte with a croissant on a wooden table”.",
+          message: "Add a photo, or tell us a little about it.",
+          hint: "Upload a shot from your café, or type something like “Iced latte with a croissant on a wooden table”.",
         });
         setStatus("error");
         textareaRef.current?.focus();
@@ -111,18 +134,23 @@ export default function CaptionStudio() {
       setLoadingStep(0);
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 45_000);
+      // Longer than the server's 45s budget: the server should always get to
+      // answer with a real error code before the browser gives up.
+      const timeout = setTimeout(() => controller.abort(), 70_000);
 
       try {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            description: text,
+            description: text || undefined,
             tone: activeTone,
             language,
             cafeName: cafeName.trim() || undefined,
             city: city.trim() || undefined,
+            image: photo
+              ? { mimeType: photo.mimeType, data: photo.base64 }
+              : undefined,
           }),
           signal: controller.signal,
         });
@@ -166,6 +194,7 @@ export default function CaptionStudio() {
           props: {
             tone: activeTone,
             source: override?.source ?? "form",
+            has_image: Boolean(photo),
           },
         });
       } catch (err) {
@@ -180,8 +209,48 @@ export default function CaptionStudio() {
         clearTimeout(timeout);
       }
     },
-    [description, tone, language, cafeName, city],
+    [description, tone, language, cafeName, city, image],
   );
+
+  /* ------------------------------- photo -------------------------------- */
+
+  const handlePhoto = useCallback(async (file: File) => {
+    setImageError(null);
+    setPreparingImage(true);
+
+    try {
+      const prepared = await prepareImage(file);
+      setImage((previous) => {
+        releaseImage(previous);
+        return prepared;
+      });
+      track({ name: "photo_upload", props: { outcome: "ready" } });
+    } catch (error) {
+      setImageError(
+        error instanceof ImagePrepError
+          ? error.message
+          : "That photo couldn't be processed. Try another one.",
+      );
+      track({ name: "photo_upload", props: { outcome: "rejected" } });
+    } finally {
+      setPreparingImage(false);
+    }
+  }, []);
+
+  const removePhoto = useCallback(() => {
+    setImage((previous) => {
+      releaseImage(previous);
+      return null;
+    });
+    setImageError(null);
+  }, []);
+
+  // Revoke the last preview URL when the studio unmounts, so blobs don't leak.
+  const imageRef = useRef<PreparedImage | null>(null);
+  useEffect(() => {
+    imageRef.current = image;
+  }, [image]);
+  useEffect(() => () => releaseImage(imageRef.current), []);
 
   const reset = () => {
     setCaptions([]);
@@ -199,7 +268,7 @@ export default function CaptionStudio() {
       return;
     }
     const id = setInterval(() => {
-      setLoadingStep((step) => Math.min(step + 1, LOADING_STEPS.length - 1));
+      setLoadingStep((step) => Math.min(step + 1, LOADING_STEP_COUNT - 1));
     }, 2400);
     return () => clearInterval(id);
   }, [isLoading]);
@@ -295,14 +364,29 @@ export default function CaptionStudio() {
         }}
         noValidate
       >
-        {/* description */}
-        <div>
+        {/* photo */}
+        <PhotoDropzone
+          image={image}
+          preparing={preparingImage}
+          error={imageError}
+          disabled={isLoading}
+          onSelect={(file) => void handlePhoto(file)}
+          onRemove={removePhoto}
+        />
+
+        {/* description — optional once a photo is attached */}
+        <div className="mt-4">
           <div className="mb-2 flex items-end justify-between gap-3">
             <label
               htmlFor="photo-description"
               className="text-[12.5px] font-semibold text-espresso-800 sm:text-[13px]"
             >
-              Describe the photo
+              {hasPhoto ? "Anything to add?" : "Describe the photo"}{" "}
+              {hasPhoto && (
+                <span className="font-medium text-espresso-500/80">
+                  optional
+                </span>
+              )}
             </label>
             <span
               className={`shrink-0 text-[10.5px] tabular-nums transition-colors ${
@@ -330,7 +414,11 @@ export default function CaptionStudio() {
             }}
             rows={3}
             maxLength={MAX_DESCRIPTION_LENGTH}
-            placeholder="e.g. An iced latte beside a croissant on a walnut table…"
+            placeholder={
+              hasPhoto
+                ? "e.g. Focus on the pastries, mention the quiet corner…"
+                : "e.g. An iced latte beside a croissant on a walnut table…"
+            }
             className="field pretty-scroll min-h-[112px]"
             aria-describedby="description-help"
             disabled={isLoading}
@@ -339,7 +427,9 @@ export default function CaptionStudio() {
             id="description-help"
             className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500/90"
           >
-            One line is enough. Props, light and mood help.
+            {hasPhoto
+              ? "Optional. Your photo is doing the heavy lifting — add a detail only if you want it in the captions."
+              : "One line is enough. Props, light and mood help."}
           </p>
         </div>
 
@@ -544,7 +634,11 @@ export default function CaptionStudio() {
 
         {/* submit */}
         <div className="mt-5">
-          <button type="submit" disabled={isLoading} className="btn-primary group">
+          <button
+            type="submit"
+            disabled={isLoading || preparingImage}
+            className="btn-primary group"
+          >
             {isLoading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -558,7 +652,7 @@ export default function CaptionStudio() {
             )}
           </button>
           <p className="mt-2.5 text-center text-[10.5px] text-espresso-500/80">
-            Free to try · No account · Your description isn&apos;t stored
+            Free to try · No account · Your photo and notes aren&apos;t stored
           </p>
         </div>
       </form>
@@ -613,13 +707,17 @@ export default function CaptionStudio() {
 
       {/* ------------------------------- results ------------------------------ */}
       <p role="status" aria-live="polite" className="sr-only">
-        {isLoading
-          ? LOADING_STEPS[loadingStep]
-          : status === "success"
-            ? `${captions.length} captions ready.`
-            : status === "error" && error
-              ? error.message
-              : ""}
+        {preparingImage
+          ? "Preparing your photo…"
+          : isLoading
+            ? loadingSteps[loadingStep]
+            : status === "success"
+              ? `${captions.length} captions ready.`
+              : status === "error" && error
+                ? error.message
+                : imageError
+                  ? imageError
+                  : ""}
       </p>
 
       <div ref={resultsRef} aria-busy={isLoading}>
@@ -656,7 +754,7 @@ export default function CaptionStudio() {
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-caramel-500 [animation-delay:400ms]" />
               </span>
               <span className="text-[11.5px] font-medium text-espresso-700">
-                {LOADING_STEPS[loadingStep]}
+                {loadingSteps[loadingStep]}
               </span>
             </div>
 
@@ -683,6 +781,7 @@ export default function CaptionStudio() {
               </span>
               <span className="tag">{tone}</span>
               <span className="tag">{language}</span>
+              {hasPhoto && <span className="tag">from photo</span>}
               <button
                 type="button"
                 onClick={copyAll}
