@@ -365,6 +365,18 @@ page for this step:
   `https://cafecaption.tech/menu/demo`; a real order swaps that one constant for
   the café's own live menu URL
 
+### WhatsApp ordering
+
+Under a generated menu the owner can type the café's number and press **Generate
+Order Link**. `normalizePhone()` accepts what people actually paste — `+91 98765
+43210`, `098765 43210`, `9876543210` — and returns the ten digits, or `null` when
+it isn't a usable Indian mobile (`6–9` prefix, ten digits). The link is then
+`https://wa.me/91<digits>?text=…` with *"Hi, I'd like to order from your digital
+menu"* pre-filled, rendered as a real `wa.me` button plus the raw URL so the
+owner can paste it on their own site. Pure client-side, nothing is sent anywhere,
+and the event is a normal `cta_click { location: "menu_studio", label:
+"whatsapp_order" }` — no phone number is ever tracked.
+
 ### Photo upload (vision)
 
 The visitor can upload a photo instead of typing. The heavy lifting happens in

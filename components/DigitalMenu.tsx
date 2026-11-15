@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
+  ArrowUpRight,
   Check,
   Download,
   Loader2,
+  MessageCircle,
   QrCode,
   RotateCcw,
   Sparkles,
@@ -60,6 +62,12 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   const [menu, setMenu] = useState<MenuData | null>(null);
   const [error, setError] = useState<StudioError | null>(null);
   const [downloaded, setDownloaded] = useState(false);
+
+  // The WhatsApp number lives here, not in the order panel, so re-reading a
+  // photo doesn't wipe what the owner just typed.
+  const [orderNumber, setOrderNumber] = useState("");
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [orderRequested, setOrderRequested] = useState(false);
 
   const reduced = usePrefersReducedMotion();
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -176,6 +184,28 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     setMenu(null);
     setError(null);
     setStatus("idle");
+  };
+
+  /* --------------------------- WhatsApp ordering -------------------------- */
+
+  const orderDigits = normalizePhone(orderNumber);
+  const orderLink =
+    orderRequested && orderDigits ? orderLinkFor(orderDigits) : null;
+
+  const generateOrderLink = () => {
+    if (!orderDigits) {
+      setOrderError(
+        "That doesn't look like a mobile number. Ten digits, starting 6–9.",
+      );
+      return;
+    }
+    setOrderError(null);
+    setOrderRequested(true);
+  };
+
+  const changeOrderNumber = (value: string) => {
+    setOrderNumber(value.slice(0, 16));
+    setOrderError(null);
   };
 
   /* ------------------------------ QR code ------------------------------- */
@@ -469,6 +499,16 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
             </div>
 
             {!isSample && (
+              <OrderPanel
+                number={orderNumber}
+                error={orderError}
+                link={orderLink}
+                onNumberChange={changeOrderNumber}
+                onGenerate={generateOrderLink}
+              />
+            )}
+
+            {!isSample && (
               <button
                 type="button"
                 onClick={() => void generate()}
@@ -588,6 +628,141 @@ function MenuRow({ item }: { item: MenuItem }) {
         {item.price}
       </span>
     </li>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  WhatsApp ordering                                                         */
+/* -------------------------------------------------------------------------- */
+
+/** The message a customer sends when they tap the order button. */
+const ORDER_MESSAGE = "Hi, I'd like to order from your digital menu";
+
+/**
+ * Accepts what people actually type or paste — "+91 98765 43210",
+ * "098765 43210", "9876543210" — and returns the ten digits WhatsApp needs, or
+ * null when it isn't a usable Indian mobile number.
+ */
+function normalizePhone(input: string): string | null {
+  let digits = input.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  return /^[6-9]\d{9}$/.test(digits) ? digits : null;
+}
+
+/** `wa.me` deep link with the order message pre-filled. */
+function orderLinkFor(digits: string): string {
+  return `https://wa.me/91${digits}?text=${encodeURIComponent(ORDER_MESSAGE)}`;
+}
+
+/**
+ * The paid alternative to a food-delivery aggregator, in one field: the number
+ * is all we need to build a link the café can put on its menu, its Instagram
+ * bio or its website — the order lands in the WhatsApp they already answer.
+ */
+function OrderPanel({
+  number,
+  error,
+  link,
+  onNumberChange,
+  onGenerate,
+}: {
+  number: string;
+  error: string | null;
+  link: string | null;
+  onNumberChange: (value: string) => void;
+  onGenerate: () => void;
+}) {
+  return (
+    <div className="hairline mt-3 rounded-xl bg-white/55 p-3.5">
+      <label
+        htmlFor="menu-order-number"
+        className="flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-espresso-500"
+      >
+        <MessageCircle className="h-3 w-3 shrink-0 text-caramel-500" aria-hidden />
+        Café&apos;s WhatsApp number
+      </label>
+
+      <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+        <div className="relative min-w-0 flex-1">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-medium text-espresso-400"
+          >
+            +91
+          </span>
+          <input
+            id="menu-order-number"
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel-national"
+            value={number}
+            onChange={(event) => onNumberChange(event.target.value)}
+            placeholder="98765 43210"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "menu-order-error" : "menu-order-hint"}
+            className="input py-2.5 pl-12 text-base sm:text-[13.5px]"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={onGenerate}
+          className="tap inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-xl border border-espresso-900/15 bg-white/70 px-3.5 text-[11.5px] font-semibold text-espresso-700 transition hover:border-espresso-900/30 hover:bg-white hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+        >
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          Generate Order Link
+        </button>
+      </div>
+
+      {error ? (
+        <p
+          id="menu-order-error"
+          role="alert"
+          className="mt-1.5 text-[10.5px] font-medium leading-[1.5] text-[#9C4527]"
+        >
+          {error}
+        </p>
+      ) : (
+        <p
+          id="menu-order-hint"
+          className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500/80"
+        >
+          Ten digits — we add the +91. Nothing is sent anywhere.
+        </p>
+      )}
+
+      {link && (
+        <div className="mt-3 animate-fade-up">
+          <TrackedLink
+            href={link}
+            target="_blank"
+            rel="noopener noreferrer"
+            location="menu_studio"
+            label="whatsapp_order"
+            className="group flex min-h-[48px] items-center justify-between gap-2 rounded-xl bg-espresso-900 px-3.5 py-3 text-cream-50 transition hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/50"
+          >
+            <span className="flex items-center gap-2 text-[12px] font-semibold">
+              <MessageCircle className="h-4 w-4 text-sage-300" aria-hidden />
+              Order on WhatsApp
+            </span>
+            <ArrowUpRight
+              aria-hidden
+              className="h-3.5 w-3.5 opacity-70 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+            />
+          </TrackedLink>
+
+          <p className="mt-1.5 break-all text-[9.5px] leading-[1.5] text-espresso-500/80">
+            {link}
+          </p>
+
+          <p className="mt-2 text-[10.5px] leading-[1.6] text-espresso-600">
+            Put this button on your digital menu so customers can order directly
+            without paying Zomato commissions.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
