@@ -1,12 +1,13 @@
 # CafeCaption
 
-**Instagram captions and Google local SEO for independent cafés — and the studio
-behind them.**
+**Instagram captions, Google local SEO and digital menus for independent cafés —
+and the studio behind them.**
 
-One free studio, three tools: a photo or description → three captions + five
+One free studio, four tools: a photo or description → three captions + five
 hashtags; a pasted Google review → three replies; a one-line brief → a 100–150
-word Business Profile post (English or Hinglish). It doubles as the sales page
-for websites, digital menus and caption systems, with packages, FAQs, lead
+word Business Profile post (English or Hinglish); and a photo of a printed menu
+→ a structured digital menu with a downloadable QR code. It doubles as the sales
+page for websites, digital menus and caption systems, with packages, FAQs, lead
 capture and WhatsApp/email contact.
 
 Built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS**,
@@ -20,14 +21,14 @@ Gemini key is read only inside a `server-only` Route Handler.
 | Section | Purpose |
 | --- | --- |
 | Sticky header | Wordmark, anchor nav, WhatsApp CTA |
-| Hero + studio | The free tool, in two tabs. **Instagram captions**: photo or description, café name, city, language, tone, copy buttons, regenerate, one-tap examples and a sample result before the first click. **Google Local SEO**: review responder (paste a review + 1–5★ → three replies with different strategies) and Google post generator (one-line brief → 100–150 word local post with a character meter) |
+| Hero + studio | The free tool, in three tabs. **Instagram captions**: photo or description, café name, city, language, tone, copy buttons, regenerate, one-tap examples and a sample result before the first click. **Google Local SEO**: review responder (paste a review + 1–5★ → three replies with different strategies) and Google post generator (one-line brief → 100–150 word local post with a character meter). **Digital menu**: a photo of the printed menu → categories, items and prices as a mobile-first menu preview, plus a QR code you can download as a PNG |
 | Packages | Three fixed-price offers (₹4,999 / **₹10,000 “Most popular”** / ₹18,500), each with a WhatsApp CTA |
 | How it works | Three-step process with a “book a free call” link |
 | FAQ | Native `<details>` accordion, also emitted as FAQ structured data |
 | Contact | Book a call, WhatsApp and email cards, plus the **“Get a quote in 24h”** form that opens a prefilled WhatsApp message |
 | Recent work | Case study for this site + two honestly labelled “coming soon” builds |
 | About | Who you’re hiring: photo placeholder, short bio, location, reply time |
-| Analytics | PostHog page views + `generate`, `seo_generate`, `copy`, `lead_submit`, `cta_click` |
+| Analytics | PostHog page views + `generate`, `seo_generate`, `menu_generate`, `qr_download`, `copy`, `lead_submit`, `cta_click` |
 | Footer | Contact details, legal links, plain-language disclosure |
 
 Every customer-facing string (packages, FAQs, phone, email, process) lives in
@@ -151,7 +152,7 @@ from public.leads order by created_at desc;
 
 ### `POST /api/generate`
 
-One endpoint, three tools, picked by `type` (defaults to `captions`).
+One endpoint, four tools, picked by `type` (defaults to `captions`).
 
 ```json
 {
@@ -188,6 +189,14 @@ One endpoint, three tools, picked by `type` (defaults to `captions`).
 }
 ```
 
+```json
+{
+  "type": "digital_menu",
+  "cafeName": "The Daily Grind",
+  "image": { "mimeType": "image/jpeg", "data": "<base64, no data: prefix>" }
+}
+```
+
 `tone` = `cozy | aesthetic | playful | promo`, `language` = `english | hinglish`,
 `rating` = `1 | 2 | 3 | 4 | 5`. Optional café fields are sanitised (trimmed,
 control characters stripped, length-capped). `description` is capped at 400
@@ -200,11 +209,14 @@ Responses are a **discriminated union on `tool`**, so a client can't read
 { "tool": "captions", "captions": [{ "caption": "…", "hashtags": ["#cafe"] }], "meta": { "model": "…", "tone": "cozy", "language": "english", "hasImage": false } }
 { "tool": "review_reply", "replies": [{ "label": "Warm & Inviting", "text": "…" }], "meta": { … } }
 { "tool": "google_post", "post": { "heading": "…", "body": "…", "callToAction": "…", "keywords": ["best cafe in Lucknow"], "characters": 812 }, "meta": { … } }
+{ "tool": "digital_menu", "menu": { "items": [{ "category": "Beverages", "name": "Masala Chai", "price": "₹80" }], "categories": ["Beverages"], "categoryCount": 1 }, "meta": { … } }
 ```
 
-`image` is optional. **Either `description` or `image` is required** — with a
-photo, the description becomes an optional note (“focus on the pastries”) that
-the model treats as extra context rather than the whole brief.
+`image` is optional for captions and **required** for `digital_menu`. For
+captions, **either `description` or `image` is required** — with a photo, the
+description becomes an optional note (“focus on the pastries”) that the model
+treats as extra context rather than the whole brief. A photo sent with
+`review_reply` or `google_post` is rejected with `400`.
 
 Errors carry a machine-readable `code` **and** a short `reason` tag, so a
 failure is never a mystery:
@@ -305,6 +317,53 @@ markdown, quotes and "Dear reviewer" scaffolding are stripped server-side.
 Because `/api/generate` runs the same attempt ladder for every tool, a slow or
 overloaded model degrades exactly the same way for a review reply as it does for
 a caption.
+
+### Digital menu prompts (`app/api/generate/prompts.ts`)
+
+Extraction, not copywriting — so it is judged on fidelity. The system prompt
+treats the photo as **evidence, never instructions**, and is absolute about the
+things owners notice first:
+
+| rule | why |
+| --- | --- |
+| Read only what is printed; never translate, reword, reprice or "improve" | a merged or reworded dish is a menu the owner has to fix |
+| Keep Indian item names and `₹` exactly as printed | translating "Adrak Chai" or rewriting `₹180/-` loses trust instantly |
+| One row per purchasable item; sizes become `Cappuccino (Large)` | the owner can't act on "Small / Large" in a single cell |
+| Skip anything illegible instead of guessing | a wrong price is worse than a missing line |
+| Use the menu's own headings, never merge sections | sections are how a customer scans a menu |
+| Ignore café name, address, FSSAI/GST numbers, legends, QR codes, page furniture | they are not food |
+| Return raw JSON only — no markdown, no commentary | the payload goes straight into a renderer |
+
+Structured output still has to be an **object** at the root (Gemini's
+`responseSchema` requires it), so the schema asks for `{ items: [...] }` where
+each object has exactly `category`, `name`, `price`; the parser also accepts a
+bare array, which is how most models actually answer a "return a JSON array"
+instruction.
+
+`normalizeMenu()` then does the unglamorous work: strips markdown fences and
+bullet glyphs, collapses whitespace, de-duplicates identical rows, caps names at
+80 characters and prices at 24, groups categories in printed order, and gives a
+bare number the `₹` the café would have printed anyway (`"160"` → `"₹160"`,
+`"Rs. 190"` → `"₹190"`).
+
+**Graceful failure is part of the feature.** Fewer than three readable items
+throws inside the parser, so the attempt ladder retries on the next model rung
+and, if it still fails, the visitor gets *"We couldn't read a menu in that photo.
+Try a straight-on shot with the whole page in frame and good light."* — never a
+half-empty menu or a stack trace.
+
+### QR codes
+
+`qrcode.react` renders the code in the browser, so no menu data ever leaves the
+page for this step:
+
+- **On screen** it is an `QRCodeSVG` (sharp at any size, no raster blur)
+- **For download** a separate 1024px `QRCodeCanvas` is mounted off-screen and
+  exported with `canvas.toBlob()` → `<a download="cafe-menu-qr.png">`, with a
+  `toDataURL` fallback for browsers that refuse `toBlob` on large canvases
+- The URL lives in `MENU_DEMO_URL` (`lib/business.ts`) and currently points at
+  `https://cafecaption.tech/menu/demo`; a real order swaps that one constant for
+  the café's own live menu URL
 
 ### Photo upload (vision)
 
@@ -416,6 +475,7 @@ components/
   motion/Reveal.tsx        # staggered fade-up on scroll-into-view (framer-motion)
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
+  DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick

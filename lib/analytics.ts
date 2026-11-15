@@ -40,6 +40,22 @@ export type AnalyticsEvent =
       };
     }
   | {
+      name: "menu_generate";
+      props: {
+        /** Items read off the photo. 0 when the photo wasn't a readable menu. */
+        items: number;
+        /** How many sections those items fell into. */
+        categories: number;
+      };
+    }
+  | {
+      name: "qr_download";
+      props: {
+        /** `demo` until a café's own menu URL is wired up. */
+        target: "demo";
+      };
+    }
+  | {
       name: "copy";
       props: { kind: "caption" | "hashtags" | "all" | "reply" | "post" | "post_cta" };
     }

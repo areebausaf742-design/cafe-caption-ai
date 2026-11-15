@@ -5,11 +5,12 @@
  * Gemini API key) is ever imported from a Client Component, so the key can
  * never end up in the browser bundle.
  *
- * One endpoint, three tools (see `type`):
+ * One endpoint, four tools (see `type`):
  *
  *   captions      Instagram captions + hashtags, with optional photo
  *   review_reply  three public replies to a Google review
  *   google_post   100–150 word Google Business Profile post
+ *   digital_menu  photo of a printed menu → structured categories/items/prices
  *
  * The prompts, schemas and normalisers live in ./prompts.ts so this file stays
  * about transport: validation, the attempt ladder, and honest errors.
@@ -50,6 +51,7 @@ import {
 } from "@/lib/types";
 import {
   googlePostSpec,
+  menuSpec,
   reviewSpec,
   captionsSpec,
   type ToolSpec,
@@ -717,6 +719,17 @@ const FAILURE_COPY: Record<StudioTool, ToolCopy> = {
       "The post engine came back empty. Please try again in a moment.",
     emptyHint: "A simpler brief usually lands first time.",
   },
+  digital_menu: {
+    timeout: "That menu took too long to read. Try a smaller or simpler photo.",
+    timeoutHint:
+      "Photos straight from the camera are heavy — a screenshot or a resized copy goes through faster.",
+    blocked:
+      "That photo couldn't be processed. Try a different shot of the menu, or one page at a time.",
+    empty:
+      "We couldn't read a menu in that photo. Try a straight-on shot with the whole page in frame and good light.",
+    emptyHint:
+      "Straight-on, well lit, and one page at a time gives the cleanest read.",
+  },
 };
 
 function failureCopy(tool: StudioTool, hasPhoto: boolean): ToolCopy {
@@ -775,7 +788,9 @@ export async function POST(request: Request) {
   };
 
   const tool: StudioTool =
-    fields.type === "review_reply" || fields.type === "google_post"
+    fields.type === "review_reply" ||
+    fields.type === "google_post" ||
+    fields.type === "digital_menu"
       ? fields.type
       : "captions";
 
@@ -785,19 +800,21 @@ export async function POST(request: Request) {
   const cleanCafeName = cleanOptional(fields.cafeName, MAX_CAFE_NAME_LENGTH);
   const cleanCity = cleanOptional(fields.city, MAX_CITY_LENGTH);
 
-  // 2a. The photo (captions only) — validated before anything expensive runs.
+  // 2a. The photo — validated before anything expensive runs. Only two tools
+  // read images: captions (optional) and the menu digitiser (required).
   const photoResult = parsePhoto(fields.image);
   if (!photoResult.ok) {
     return fail(photoResult.status, photoResult.message, photoResult.code, {
       rate,
     });
   }
-  const photo = tool === "captions" ? photoResult.photo : null;
+  const photoAccepts = tool === "captions" || tool === "digital_menu";
+  const photo = photoAccepts ? photoResult.photo : null;
 
-  if (photoResult.photo && tool !== "captions") {
+  if (photoResult.photo && !photoAccepts) {
     return fail(
       400,
-      "Photos are only used for Instagram captions. Remove the photo to use this tool.",
+      "Photos are only used for captions and menus. Remove the photo to use this tool.",
       "VALIDATION_ERROR",
       { rate },
     );
@@ -862,6 +879,15 @@ export async function POST(request: Request) {
     }
   }
 
+  if (tool === "digital_menu" && !photo) {
+    return fail(
+      400,
+      "Upload a photo of your physical menu so it can be digitised.",
+      "VALIDATION_ERROR",
+      { rate },
+    );
+  }
+
   if (tool === "google_post") {
     const rawTopic = typeof fields.topic === "string" ? fields.topic : "";
     const topic = rawTopic.trim();
@@ -890,7 +916,7 @@ export async function POST(request: Request) {
     if (!photoRate.allowed) {
       return fail(
         429,
-        `That's ${PHOTO_RATE_LIMIT_MAX} photo captions in 10 minutes — the limit for now. Try again shortly, or describe a photo instead.`,
+        `That's ${PHOTO_RATE_LIMIT_MAX} photo requests in 10 minutes — the limit for now. Try again shortly, or describe the photo in words instead.`,
         "RATE_LIMITED",
         { retryAfter: photoRate.retryAfter, rate },
       );
@@ -969,6 +995,35 @@ export async function POST(request: Request) {
           tone: safeTone,
           language: safeLanguage,
           tool: "google_post",
+        },
+      };
+    } else if (tool === "digital_menu") {
+      if (!photo) {
+        // Unreachable: validation above already rejected a photo-less menu
+        // request. Kept so the type narrows and a future edit can't slip past.
+        return fail(
+          400,
+          "Upload a photo of your physical menu so it can be digitised.",
+          "VALIDATION_ERROR",
+          { rate },
+        );
+      }
+
+      const { value: menu, model } = await generateWithRetry(
+        menuSpec({ tool: "digital_menu", cafeName: cleanCafeName }),
+        apiKey,
+        photo,
+      );
+
+      payload = {
+        tool: "digital_menu",
+        menu,
+        meta: {
+          model,
+          tone: safeTone,
+          language: safeLanguage,
+          tool: "digital_menu",
+          hasImage: true,
         },
       };
     } else {

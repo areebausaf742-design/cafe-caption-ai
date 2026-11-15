@@ -26,6 +26,15 @@ export interface PhotoDropzoneProps {
   /** Friendly copy for a rejected file (wrong type, too big, unreadable). */
   error: string | null;
   disabled?: boolean;
+  /** Overrides the idle headline (default: the generic upload copy). */
+  title?: string;
+  /** Replaces the idle sub-line under the headline. */
+  hint?: string;
+  /**
+   * The generic picker offers "describe it instead" — wrong for tools where a
+   * photo is mandatory (the menu digitiser), so that footer can be dropped.
+   */
+  showFallbackHint?: boolean;
   /** Receives the raw File; the parent runs it through `prepareImage`. */
   onSelect: (file: File) => void;
   onRemove: () => void;
@@ -47,6 +56,9 @@ export default function PhotoDropzone({
   preparing,
   error,
   disabled = false,
+  title,
+  hint,
+  showFallbackHint = true,
   onSelect,
   onRemove,
 }: PhotoDropzoneProps) {
@@ -212,7 +224,7 @@ export default function PhotoDropzone({
               ? "Preparing your photo…"
               : dragging
                 ? "Drop it here"
-                : "Click to upload or drag & drop a photo"}
+                : (title ?? "Click to upload or drag & drop a photo")}
           </span>
 
           <span
@@ -221,9 +233,10 @@ export default function PhotoDropzone({
           >
             {preparing
               ? "Shrinking it in your browser so it uploads fast."
-              : `JPG, PNG or WebP · up to ${Math.round(
+              : (hint ??
+                `JPG, PNG or WebP · up to ${Math.round(
                   MAX_UPLOAD_BYTES / (1024 * 1024),
-                )} MB · we downscale it before sending`}
+                )} MB · we downscale it before sending`)}
           </span>
 
           {preparing && (
@@ -245,7 +258,7 @@ export default function PhotoDropzone({
         </p>
       )}
 
-      {!image && !error && !preparing && (
+      {!image && !error && !preparing && showFallbackHint && (
         <p className="mt-2 flex items-center gap-1.5 text-[10.5px] leading-[1.55] text-espresso-500/80">
           <ImagePlus className="h-3 w-3 shrink-0" />
           No photo handy? Just describe it below — no upload needed.
