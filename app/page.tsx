@@ -88,7 +88,7 @@ export default function HomePage() {
 
         <div className="text-center">
           <span className="label animate-fade-up">
-            Caption studio & Google local SEO for cafés
+            Captions, local SEO & digital menus for cafés
           </span>
 
           <h1

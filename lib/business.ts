@@ -253,6 +253,10 @@ export const FAQS = [
     a: "Yes. Every caption is written in English or Hinglish, and your café name, city and tone are built in, so the copy sounds like your counter, not a template.",
   },
   {
+    q: "Can it digitise my printed menu?",
+    a: "Yes. Take a photo of your menu in the studio and you get the categories, items and prices back as a clean digital menu, plus a QR code you can download and print for your tables. The Café Launch Kit includes it set up with your own menu link.",
+  },
+  {
     q: "What do you need from me to start?",
     a: "A menu (a photo is fine), 10–15 photos of your space and food, your logo if you have one, and 20 minutes on a call. If you don't have photos yet, we can work with what you have on your phone.",
   },
