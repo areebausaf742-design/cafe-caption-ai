@@ -48,12 +48,13 @@ export const maxDuration = 30;
 
 /**
  * Time budgets. The first attempt is cut off early so a hung upstream call
- * fails fast; the single retry gets a longer leash because the model usually
- * answers second time around. 8s + 20s = 28s, comfortably inside maxDuration.
+ * fails fast; the retry gets a longer leash because the model usually answers
+ * second time around; the last slot is given to a lighter fallback model.
+ * 8s + 12s + 8s = 28s, comfortably inside maxDuration.
  */
 const FIRST_ATTEMPT_TIMEOUT_MS = 8_000;
-const RETRY_TIMEOUT_MS = 20_000;
-const MAX_ATTEMPTS = 2;
+const RETRY_TIMEOUT_MS = 12_000;
+const FALLBACK_TIMEOUT_MS = 8_000;
 
 /* -------------------------------------------------------------------------- */
 /*  CONFIG                                                                    */
@@ -72,7 +73,48 @@ const MAX_ATTEMPTS = 2;
 const apiKey = process.env.GEMINI_API_KEY;
 
 /** Default model. Override with GEMINI_MODEL if you want a different one. */
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
+
+/**
+ * Safety net. If the primary model is overloaded (503), rate limited or simply
+ * missing on this key, one last attempt goes to a lighter model before we
+ * bother the visitor with an error. Override with GEMINI_FALLBACK_MODEL.
+ */
+const FALLBACK_MODEL =
+  process.env.GEMINI_FALLBACK_MODEL?.trim() || "gemini-2.0-flash";
+
+/**
+ * Google keeps a "latest flash" alias alive across model retirements. If every
+ * configured model 404s (a retired id, a renamed model), this is the rung that
+ * keeps the studio working.
+ */
+const LAST_RESORT_MODEL = "gemini-flash-latest";
+
+/**
+ * Output ceiling. Gemini 2.5 models spend part of this budget on *thinking*
+ * tokens; 1024 was tight enough that a chatty attempt could return an empty or
+ * half-written JSON object. 2048 leaves room for both.
+ */
+const MAX_OUTPUT_TOKENS = 2_048;
+
+/**
+ * Test-only override so the route can be exercised against a local mock Gemini.
+ * Ignored in production: the SDK always talks to Google there.
+ */
+const BASE_URL =
+  process.env.NODE_ENV === "production"
+    ? undefined
+    : process.env.GEMINI_BASE_URL?.trim() || undefined;
+
+/**
+ * The attempt ladder: fast try → longer retry on the same model → lighter
+ * fallback model. Anything the visitor sees comes from the last rung.
+ */
+const ATTEMPTS: { model: string; timeoutMs: number }[] = [
+  { model: MODEL, timeoutMs: FIRST_ATTEMPT_TIMEOUT_MS },
+  { model: MODEL, timeoutMs: RETRY_TIMEOUT_MS },
+  { model: FALLBACK_MODEL, timeoutMs: FALLBACK_TIMEOUT_MS },
+];
 
 /** Abuse guard: requests allowed per IP inside the window. */
 const RATE_LIMIT_MAX = 12;
@@ -194,17 +236,38 @@ const responseSchema = {
   required: ["captions"],
 } as const;
 
-const generationConfig: GenerationConfig = {
-  temperature: 0.95,
-  topP: 0.95,
-  maxOutputTokens: 1024,
-  responseMimeType: "application/json",
-  responseSchema: responseSchema as unknown as GenerationConfig["responseSchema"],
-};
+/**
+ * Per-model generation config.
+ *
+ * Gemini 2.5 models are *thinking* models: reasoning tokens are charged to the
+ * same `maxOutputTokens` budget as the answer, which is how a request can come
+ * back with `finishReason: MAX_TOKENS` and no usable JSON. Writing cafe
+ * captions needs no chain-of-thought, so the thinking budget is switched off
+ * for 2.5 and the output ceiling is roomy for every model.
+ */
+function buildGenerationConfig(
+  model: string,
+  allowThinkingConfig: boolean,
+): GenerationConfig {
+  const config: GenerationConfig = {
+    temperature: 0.95,
+    topP: 0.95,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+    responseMimeType: "application/json",
+    responseSchema: responseSchema as unknown as GenerationConfig["responseSchema"],
+  };
 
-/* -------------------------------------------------------------------------- */
-/*  RATE LIMITING (per IP)                                                    */
-/* -------------------------------------------------------------------------- */
+  if (allowThinkingConfig && model.includes("2.5")) {
+    // This SDK version doesn't type `thinkingConfig` yet, but it forwards the
+    // generation config object to the REST API untouched.
+    return {
+      ...config,
+      thinkingConfig: { thinkingBudget: 0 },
+    } as GenerationConfig;
+  }
+
+  return config;
+}
 
 /** Requests allowed per IP inside the window. */
 const LIMIT = { namespace: "generate", max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW_MS };
@@ -217,17 +280,50 @@ function fail(
   status: number,
   error: string,
   code: string,
-  extra?: { hint?: string; retryAfter?: number; rate?: RateLimitResult },
+  extra?: {
+    hint?: string;
+    retryAfter?: number;
+    rate?: RateLimitResult;
+    reason?: string;
+  },
 ) {
   const body: ApiError = {
     error,
     code,
     ...(extra?.hint ? { hint: extra.hint } : {}),
     ...(extra?.retryAfter ? { retryAfter: extra.retryAfter } : {}),
+    ...(extra?.reason ? { reason: extra.reason } : {}),
   };
   const response = NextResponse.json(body, { status });
   if (extra?.retryAfter) response.headers.set("Retry-After", String(extra.retryAfter));
   return extra?.rate ? withRateHeaders(response, extra.rate) : response;
+}
+
+/** HTTP status carried by an SDK error, if it has one. */
+function getStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+/** Human-readable message for anything that can be thrown. */
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+/** Never let anything key-shaped reach a log line or a response body. */
+function sanitize(text: string, max = 300): string {
+  return text
+    .replace(/AIza[0-9A-Za-z\-_]{10,}/g, "AIza-redacted")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 /** Raised when an attempt runs past its budget and is aborted. */
@@ -238,26 +334,79 @@ class GenerationTimeoutError extends Error {
   }
 }
 
-/** One bounded attempt. Aborts the request so the function returns, not hangs. */
-async function generateOnce(
+/** Gemini answered, but with nothing we can post. Worth one more attempt. */
+class ModelOutputError extends Error {
+  readonly kind: "empty" | "unparsable";
+
+  constructor(kind: "empty" | "unparsable", message: string) {
+    super(message);
+    this.name = "ModelOutputError";
+    this.kind = kind;
+  }
+}
+
+/** Gemini refused the prompt outright (safety / recitation). Retrying won't help. */
+class BlockedError extends Error {
+  readonly blockReason: string;
+
+  constructor(blockReason: string) {
+    super(`Gemini blocked the prompt (${blockReason}).`);
+    this.name = "BlockedError";
+    this.blockReason = blockReason;
+  }
+}
+
+/** Every rung of the ladder failed; carries the final diagnosis. */
+class GenerationFailureError extends Error {
+  readonly model: string;
+  readonly status?: number;
+  readonly kind:
+    | "timeout"
+    | "empty"
+    | "unparsable"
+    | "rate_limited"
+    | "model_missing"
+    | "upstream";
+
+  constructor(failure: {
+    error: unknown;
+    model: string;
+    status?: number;
+    kind: GenerationFailureError["kind"];
+  }) {
+    super(sanitize(errorMessage(failure.error)));
+    this.name = "GenerationFailureError";
+    this.model = failure.model;
+    this.status = failure.status;
+    this.kind = failure.kind;
+  }
+}
+
+/** One bounded HTTP call to Gemini. Aborts so the function returns, not hangs. */
+async function oneCall(
   prompt: string,
-  apiKey: string,
+  key: string,
+  model: string,
   timeoutMs: number,
+  allowThinkingConfig: boolean,
 ) {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: MODEL,
-    systemInstruction: SYSTEM_INSTRUCTION,
-    generationConfig,
-  });
+  const genAI = new GoogleGenerativeAI(key);
+  const client = genAI.getGenerativeModel(
+    {
+      model,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: buildGenerationConfig(model, allowThinkingConfig),
+    },
+    BASE_URL ? { baseUrl: BASE_URL } : undefined,
+  );
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await model.generateContent(prompt, { signal: controller.signal });
+    return await client.generateContent(prompt, { signal: controller.signal });
   } catch (error) {
-    // The SDK surfaces an abort as a network error — report it as a timeout.
+    // The SDK surfaces an abort as a network error - report it as a timeout.
     if (controller.signal.aborted) throw new GenerationTimeoutError(timeoutMs);
     throw error;
   } finally {
@@ -265,44 +414,171 @@ async function generateOnce(
   }
 }
 
-/** Up to two attempts: fast first try, one slower retry. Throws the last error. */
-async function generateWithRetry(prompt: string, apiKey: string) {
-  let lastError: unknown;
+/**
+ * Read the model's answer. Anything unusable becomes a `ModelOutputError` so
+ * the caller can retry instead of showing the visitor a blank result.
+ */
+function interpretResponse(
+  result: Awaited<ReturnType<typeof oneCall>>,
+  model: string,
+): Caption[] {
+  const response = result.response;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const timeoutMs =
-      attempt === 1 ? FIRST_ATTEMPT_TIMEOUT_MS : RETRY_TIMEOUT_MS;
+  // Gemini can refuse a prompt (safety filters) before producing text.
+  const blockReason = response.promptFeedback?.blockReason;
+  if (blockReason) throw new BlockedError(String(blockReason));
+
+  const finishReason = response.candidates?.[0]?.finishReason
+    ? String(response.candidates[0].finishReason)
+    : undefined;
+
+  let text = "";
+  try {
+    text = response.text();
+  } catch {
+    // `.text()` throws when the candidate has no parts at all.
+    text = "";
+  }
+
+  if (!text.trim()) {
+    throw new ModelOutputError(
+      "empty",
+      `Model ${model} returned no text (finishReason: ${finishReason ?? "unknown"}).`,
+    );
+  }
+
+  try {
+    return normalizeCaptions(extractJson(text));
+  } catch (error) {
+    throw new ModelOutputError(
+      "unparsable",
+      `Model ${model} text was unusable (finishReason: ${finishReason ?? "unknown"}): ${sanitize(text, 180)}${
+        error instanceof Error ? ` - ${error.message}` : ""
+      }`,
+    );
+  }
+}
+
+/** One attempt: call the model, then insist on postable captions. */
+async function attemptModel(
+  prompt: string,
+  key: string,
+  model: string,
+  timeoutMs: number,
+): Promise<Caption[]> {
+  const thinkingAllowed = model.includes("2.5");
+
+  try {
+    return interpretResponse(
+      await oneCall(prompt, key, model, timeoutMs, thinkingAllowed),
+      model,
+    );
+  } catch (error) {
+    // If this API version rejects `thinkingConfig`, retry the same model
+    // without it (fails in ~200ms) rather than failing the whole request.
+    if (
+      thinkingAllowed &&
+      getStatus(error) === 400 &&
+      /thinking/i.test(errorMessage(error))
+    ) {
+      console.warn("[generate] thinkingConfig rejected - retrying without it.");
+      return interpretResponse(
+        await oneCall(prompt, key, model, timeoutMs, false),
+        model,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Walk the attempt ladder and return the first usable result.
+ *
+ * Throws `BlockedError` immediately (retrying a safety block is pointless) and
+ * rethrows the raw SDK error for a dead key, but retries everything else:
+ * overloaded models, rate limits, empty replies and half-written JSON.
+ */
+async function generateWithRetry(
+  prompt: string,
+  key: string,
+): Promise<{ captions: Caption[]; model: string }> {
+  const startedAt = Date.now();
+  let last: {
+    error: unknown;
+    model: string;
+    status?: number;
+    kind: GenerationFailureError["kind"];
+  } | null = null;
+
+  for (let index = 0; index < ATTEMPTS.length; index += 1) {
+    const { model, timeoutMs } = ATTEMPTS[index];
 
     try {
-      return await generateOnce(prompt, apiKey, timeoutMs);
+      const captions = await attemptModel(prompt, key, model, timeoutMs);
+      if (index > 0) {
+        console.info(
+          `[generate] recovered on attempt ${index + 1}/${ATTEMPTS.length} (${model}).`,
+        );
+      }
+      return { captions, model };
     } catch (error) {
-      lastError = error;
+      const status = getStatus(error);
 
-      const status =
-        typeof error === "object" &&
-        error !== null &&
-        "status" in error &&
-        typeof (error as { status?: unknown }).status === "number"
-          ? (error as { status: number }).status
-          : undefined;
+      let kind: GenerationFailureError["kind"];
+      if (error instanceof GenerationTimeoutError) kind = "timeout";
+      else if (error instanceof ModelOutputError) kind = error.kind;
+      else if (status === 429) kind = "rate_limited";
+      else if (status === 404) kind = "model_missing";
+      else kind = "upstream";
 
-      const timedOut = error instanceof GenerationTimeoutError;
-      // Retry only what can plausibly succeed on a second try. A bad key or a
-      // malformed request will fail identically, so don't burn 20 more seconds.
-      const worthRetrying =
-        timedOut || status === undefined || status === 429 || status >= 500;
+      last = { error, model, status, kind };
 
       console.warn(
-        `[generate] attempt ${attempt}/${MAX_ATTEMPTS} failed (${timedOut ? "timeout" : `status ${status ?? "n/a"}`}):`,
-        error instanceof Error ? error.message : error,
+        `[generate] attempt ${index + 1}/${ATTEMPTS.length} failed on ${model} (${kind}${
+          status ? `, status ${status}` : ""
+        }): ${sanitize(errorMessage(error))}`,
       );
 
-      if (!worthRetrying) throw error;
-      // Otherwise fall through to the next attempt; running out rethrows below.
+      if (error instanceof BlockedError) throw error;
+
+      // A dead key never fixes itself: stop burning the remaining budget.
+      if (
+        (status === 400 || status === 403) &&
+        /api key not valid|api_key_invalid|permission denied|unauthenticated/i.test(
+          errorMessage(error),
+        )
+      ) {
+        throw error;
+      }
     }
   }
 
-  throw lastError ?? new Error("Gemini call failed.");
+  // Every configured model 404'd — try Google's own "latest flash" alias, but
+  // only if enough of the 30s budget is left for it.
+  if (last?.kind === "model_missing" && Date.now() - startedAt < 18_000) {
+    try {
+      const captions = await attemptModel(
+        prompt,
+        key,
+        LAST_RESORT_MODEL,
+        FALLBACK_TIMEOUT_MS,
+      );
+      console.info(`[generate] recovered on the ${LAST_RESORT_MODEL} alias.`);
+      return { captions, model: LAST_RESORT_MODEL };
+    } catch (error) {
+      console.warn(
+        `[generate] ${LAST_RESORT_MODEL} also failed: ${sanitize(errorMessage(error))}`,
+      );
+    }
+  }
+
+  throw new GenerationFailureError(
+    last ?? {
+      error: new Error("Gemini call failed."),
+      model: MODEL,
+      kind: "upstream",
+    },
+  );
 }
 
 /** Trim, collapse whitespace and cap length of optional user text. */
@@ -466,9 +742,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // 4. Call Gemini — bounded by an 8s first attempt and one 20s retry.
+  // 4. Call Gemini — 8s, then a 12s retry, then an 8s fallback model.
   try {
-    const result = await generateWithRetry(
+    const { captions, model } = await generateWithRetry(
       buildUserPrompt({
         description: cleanDescription,
         tone: safeTone,
@@ -479,25 +755,9 @@ export async function POST(request: Request) {
       apiKey,
     );
 
-    const response = result.response;
-
-    // Gemini can refuse a prompt (safety filters) before producing text.
-    const blockReason = response.promptFeedback?.blockReason;
-    if (blockReason) {
-      return fail(
-        422,
-        "The AI couldn't work with that description. Try describing the photo differently.",
-        "BLOCKED",
-        { hint: `Blocked by Gemini (${blockReason}).`, rate },
-      );
-    }
-
-    const text = response.text();
-    const captions = normalizeCaptions(extractJson(text));
-
     const payload: GenerateResponse = {
       captions,
-      meta: { model: MODEL, tone: safeTone, language: safeLanguage },
+      meta: { model, tone: safeTone, language: safeLanguage },
     };
 
     const ok = NextResponse.json(payload, {
@@ -506,10 +766,30 @@ export async function POST(request: Request) {
     });
     return withRateHeaders(ok, rate);
   } catch (error) {
-    // Timed out twice — answer with something the visitor can act on.
-    if (error instanceof GenerationTimeoutError) {
+    const devHint = process.env.NODE_ENV === "development";
+
+    // Gemini refused the prompt — retrying the same text would fail again.
+    if (error instanceof BlockedError) {
+      console.warn(`[generate] blocked by Gemini (${error.blockReason}).`);
+      return fail(
+        422,
+        "The caption engine couldn't work with that description. Try describing the photo differently.",
+        "BLOCKED",
+        {
+          hint: devHint ? `Blocked by Gemini (${error.blockReason}).` : undefined,
+          reason: `blocked_${error.blockReason.toLowerCase()}`,
+          rate,
+        },
+      );
+    }
+
+    // Every attempt ran out of time.
+    if (
+      error instanceof GenerationTimeoutError ||
+      (error instanceof GenerationFailureError && error.kind === "timeout")
+    ) {
       console.error(
-        `[generate] timed out after ${MAX_ATTEMPTS} attempts (${FIRST_ATTEMPT_TIMEOUT_MS}ms + ${RETRY_TIMEOUT_MS}ms).`,
+        `[generate] timed out on all ${ATTEMPTS.length} attempts (${ATTEMPTS.map((a) => `${a.timeoutMs}ms`).join(" + ")}).`,
       );
       return fail(
         504,
@@ -518,56 +798,107 @@ export async function POST(request: Request) {
         {
           hint: "Try again in a few seconds. A shorter description usually comes back faster.",
           retryAfter: 10,
+          reason: "timeout",
           rate,
         },
       );
     }
 
-    // The SDK throws an APIError with an HTTP status when Google returns one.
-    const status =
-      typeof error === "object" &&
-      error !== null &&
-      "status" in error &&
-      typeof (error as { status?: unknown }).status === "number"
-        ? (error as { status: number }).status
-        : undefined;
+    // The ladder is exhausted: report the last rung's diagnosis.
+    const failure =
+      error instanceof GenerationFailureError
+        ? error
+        : {
+            status: getStatus(error),
+            kind: "upstream" as const,
+            model: MODEL,
+            message: sanitize(errorMessage(error)),
+          };
 
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error("[generate] Gemini call failed:", detail);
+    const status = failure.status;
+    const detail =
+      error instanceof GenerationFailureError
+        ? error.message
+        : sanitize(errorMessage(error));
+
+    console.error(
+      `[generate] generation failed (model ${failure.model}, kind ${failure.kind}, status ${status ?? "n/a"}): ${detail}`,
+    );
 
     if (status === 429) {
       return fail(
         429,
-        "Gemini is receiving too many requests right now. Please try again in a minute.",
+        "The caption engine is receiving too many requests right now. Please try again in a minute.",
         "UPSTREAM_RATE_LIMITED",
-        { retryAfter: 60, rate },
+        { retryAfter: 60, reason: "upstream_429", rate },
       );
     }
 
     if (status === 400 || status === 403) {
+      // A dead key is a setup problem; a rejected request is usually a model or
+      // schema problem. Different fixes, so they get different messages.
+      const keyProblem =
+        /api key not valid|api_key_invalid|api key expired|permission denied|unauthenticated/i.test(
+          detail,
+        );
+
+      return keyProblem
+        ? fail(
+            502,
+            "The caption engine rejected the key. Check that GEMINI_API_KEY is valid and that the Generative Language API is enabled for it.",
+            "UPSTREAM_AUTH",
+            { hint: devHint ? detail : undefined, reason: `upstream_${status}`, rate },
+          )
+        : fail(
+            502,
+            "The caption engine rejected the request. Please try again — if it keeps happening, set GEMINI_MODEL to a supported model.",
+            "UPSTREAM_BAD_REQUEST",
+            { hint: devHint ? detail : undefined, reason: `upstream_${status}`, rate },
+          );
+    }
+
+    if (failure.kind === "model_missing") {
       return fail(
         502,
-        "Gemini rejected the request. Double-check that your GEMINI_API_KEY is valid.",
-        "UPSTREAM_AUTH",
-        { rate },
+        `No usable Gemini model was available (tried ${MODEL} and ${FALLBACK_MODEL}).`,
+        "UPSTREAM_MODEL_NOT_FOUND",
+        {
+          hint: devHint
+            ? detail
+            : "Set GEMINI_MODEL to a model your API key can access.",
+          reason: "model_missing",
+          rate,
+        },
       );
     }
 
-    if (status === 404) {
+    // A 200 with nothing postable in it — almost always a truncated answer.
+    if (failure.kind === "empty" || failure.kind === "unparsable") {
       return fail(
         502,
-        `The model "${MODEL}" isn't available on this API key. Set GEMINI_MODEL to a supported model.`,
-        "UPSTREAM_MODEL_NOT_FOUND",
-        { rate },
+        "The caption engine came back empty. Please try again — a shorter description helps.",
+        "EMPTY_OUTPUT",
+        { hint: devHint ? detail : undefined, reason: failure.kind, rate },
+      );
+    }
+
+    // Google-side outage (503 "model overloaded" is the common one).
+    if (status !== undefined && status >= 500) {
+      return fail(
+        502,
+        "The caption engine is busy right now. Give it a few seconds and try again.",
+        "UPSTREAM_UNAVAILABLE",
+        { hint: devHint ? detail : undefined, reason: `upstream_${status}`, rate },
       );
     }
 
     return fail(
       502,
-      "The AI service didn't respond as expected. Please try again in a moment.",
+      "The caption engine didn't respond as expected. Please try again in a moment.",
       "GENERATION_FAILED",
       {
-        hint: process.env.NODE_ENV === "development" ? detail : undefined,
+        hint: devHint ? detail : undefined,
+        reason: failure.kind,
         rate,
       },
     );

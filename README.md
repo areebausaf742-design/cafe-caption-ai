@@ -162,15 +162,51 @@ from public.leads order by created_at desc;
 Optional café fields are sanitised (trimmed, control characters stripped,
 length-capped). Returns three captions with up to five normalised hashtags each.
 
-Errors: `400 VALIDATION_ERROR / INVALID_JSON`, `422 BLOCKED`, `429 RATE_LIMITED`
-(+`Retry-After`), `500 MISSING_API_KEY`, `504 TIMEOUT`, `502 UPSTREAM_* /
-GENERATION_FAILED`.
+Errors carry a machine-readable `code` **and** a short `reason` tag, so a
+failure is never a mystery:
 
-**Timeouts.** Every attempt is wrapped in an `AbortController`: the first gets
-**8 s**, a single retry gets **20 s** (28 s total, inside `maxDuration = 30`). If
-both fail the route returns `504 TIMEOUT` with a hint instead of a hung function.
-Deterministic failures (bad key, malformed request) are **not** retried — only
-timeouts, `429`, `5xx` and network errors are.
+| code | status | meaning |
+| --- | --- | --- |
+| `VALIDATION_ERROR` / `INVALID_JSON` | 400 | the request was unusable |
+| `BLOCKED` | 422 | Gemini refused the description (safety) |
+| `RATE_LIMITED` | 429 | this visitor's 12/10 min budget ran out |
+| `MISSING_API_KEY` | 500 | `GEMINI_API_KEY` isn't set |
+| `TIMEOUT` | 504 | every attempt ran out of time |
+| `UPSTREAM_RATE_LIMITED` | 429 | Google is throttling this key |
+| `UPSTREAM_AUTH` | 502 | the key was rejected (invalid / API not enabled) |
+| `UPSTREAM_BAD_REQUEST` | 502 | the model rejected the request shape |
+| `UPSTREAM_MODEL_NOT_FOUND` | 502 | no configured model exists on this key |
+| `UPSTREAM_UNAVAILABLE` | 502 | Google is having a bad day (`503`) |
+| `EMPTY_OUTPUT` | 502 | a 200 with nothing postable in it (usually a truncated reply) |
+| `GENERATION_FAILED` | 502 | anything else |
+
+**Attempt ladder.** Every call is wrapped in an `AbortController`:
+
+| rung | model | budget |
+| --- | --- | --- |
+| 1 | `GEMINI_MODEL` (default `gemini-2.5-flash`) | 8 s |
+| 2 | same model | 12 s |
+| 3 | `GEMINI_FALLBACK_MODEL` (default `gemini-2.0-flash`) | 8 s |
+
+28 s total, inside `maxDuration = 30`. A retired model id also triggers one extra
+attempt on Google's `gemini-flash-latest` alias, but only if enough of the budget
+is left.
+
+What gets retried: timeouts, `429`, `5xx`, network errors, empty replies and
+half-written JSON. What doesn't: a safety block, or a rejected key (`400/403`
+with "API key not valid") — retrying those just burns 28 s and quota.
+
+**Thinking budget.** Gemini 2.5 models charge reasoning tokens to the same
+`maxOutputTokens` budget as the answer, which is how a request can return
+`finishReason: MAX_TOKENS` with no usable JSON. Captions don't need
+chain-of-thought, so `thinkingConfig.thinkingBudget` is set to `0` for 2.5
+models and `maxOutputTokens` is 2048. If an API version rejects
+`thinkingConfig`, the route drops it and retries immediately.
+
+**Testing without spending quota.** Set `GEMINI_BASE_URL` (ignored in
+production) to a local mock and the SDK will call it instead of Google — that's
+how every rung of the ladder above was verified, including overloads, empty
+payloads and retired models.
 
 Rate limit: **12 requests / 10 min per IP**. Responses carry
 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
