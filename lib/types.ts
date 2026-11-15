@@ -43,6 +43,12 @@ export interface ApiError {
   hint?: string;
   /** Seconds until the client may retry (429 responses). */
   retryAfter?: number;
+  /**
+   * Short, non-sensitive machine tag for why generation failed
+   * (`upstream_503`, `empty_output`, `invalid_json`, …). Logged server-side and
+   * shown in development so a failure is never a mystery.
+   */
+  reason?: string;
 }
 
 export const TONES: { id: Tone; label: string; blurb: string }[] = [
