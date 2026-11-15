@@ -14,16 +14,20 @@ const NAV = [
   { href: "/#faq", label: "FAQ" },
 ];
 
+/**
+ * Frosted-glass header: translucent cream + backdrop blur, closed off with a
+ * hairline that fades at both ends instead of a hard grey rule.
+ */
 export default function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 border-b border-espresso-900/10 bg-cream-100/85 backdrop-blur-md">
+    <header className="sticky top-0 z-40 bg-cream-100/70 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-cream-100/60">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:h-16 sm:px-6">
         <Link
           href="/"
-          className="group flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+          className="group flex min-h-[44px] items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
           aria-label="CafeCaption — home"
         >
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-espresso-900 font-display text-[15px] font-semibold text-caramel-300 shadow-sm transition group-hover:bg-espresso-800">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-espresso-900 font-display text-[15px] font-semibold text-caramel-300 shadow-[0_6px_16px_-8px_rgba(36,24,18,0.8)] transition duration-200 group-hover:scale-[1.03] group-hover:bg-espresso-800">
             C
           </span>
           <span className="flex flex-col leading-none">
@@ -36,15 +40,12 @@ export default function SiteHeader() {
           </span>
         </Link>
 
-        <nav
-          aria-label="Main"
-          className="hidden items-center gap-7 md:flex"
-        >
+        <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
           {NAV.map((item) => (
             <a
               key={item.href}
               href={item.href}
-              className="text-[12.5px] font-medium text-espresso-600 transition hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+              className="inline-flex min-h-[44px] items-center rounded-lg px-3 text-[12.5px] font-medium text-espresso-600 transition duration-200 hover:bg-white/60 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
             >
               {item.label}
             </a>
@@ -64,6 +65,12 @@ export default function SiteHeader() {
           <span className="sm:hidden">WhatsApp</span>
         </TrackedLink>
       </div>
+
+      {/* Hairline: warm at the centre, invisible at the edges */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-espresso-900/[0.14] to-transparent"
+      />
     </header>
   );
 }

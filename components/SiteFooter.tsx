@@ -14,8 +14,12 @@ import {
 
 export default function SiteFooter() {
   return (
-    <footer className="mt-14 border-t border-espresso-900/10 bg-cream-50/60">
-      <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 sm:py-12">
+    <footer className="mt-20 bg-cream-50/60 sm:mt-28">
+      <div className="mx-auto w-full max-w-5xl px-4 pb-10 pt-12 sm:px-6 sm:pb-14 sm:pt-16">
+        <div
+          aria-hidden
+          className="mb-10 h-px w-full bg-gradient-to-r from-transparent via-espresso-900/[0.14] to-transparent"
+        />
         <div className="grid gap-8 sm:grid-cols-[1.4fr_1fr_1fr]">
           <div>
             <div className="flex items-center gap-2.5">
@@ -26,7 +30,7 @@ export default function SiteFooter() {
                 CafeCaption
               </span>
             </div>
-            <p className="mt-3 max-w-xs text-[12.5px] leading-relaxed text-espresso-600">
+            <p className="mt-3 max-w-xs text-[12.5px] leading-[1.7] text-espresso-600">
               Websites, menus and Instagram captions for independent cafés.
               Made in Lucknow, working with cafés everywhere.
             </p>
@@ -36,7 +40,7 @@ export default function SiteFooter() {
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-espresso-400">
               Studio
             </p>
-            <ul className="space-y-2">
+            <ul>
               {[
                 { href: "/#studio", label: "Caption studio" },
                 { href: "/#packages", label: "Packages" },
@@ -46,7 +50,7 @@ export default function SiteFooter() {
                 <li key={item.href}>
                   <a
                     href={item.href}
-                    className="text-espresso-600 transition hover:text-espresso-900"
+                    className="inline-flex min-h-[44px] items-center text-espresso-600 transition duration-200 hover:text-espresso-900"
                   >
                     {item.label}
                   </a>
@@ -59,7 +63,7 @@ export default function SiteFooter() {
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-espresso-400">
               Contact
             </p>
-            <ul className="space-y-2">
+            <ul>
               <li>
                 <TrackedLink
                   href={whatsappUrl(DEFAULT_WHATSAPP_MESSAGE)}
@@ -67,7 +71,7 @@ export default function SiteFooter() {
                   label="whatsapp"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-espresso-600 transition hover:text-espresso-900"
+                  className="inline-flex min-h-[44px] items-center gap-2 text-espresso-600 transition duration-200 hover:text-espresso-900"
                 >
                   <MessageCircle className="h-3.5 w-3.5" />
                   {CONTACT_PHONE_DISPLAY}
@@ -78,7 +82,7 @@ export default function SiteFooter() {
                   href={`mailto:${CONTACT_EMAIL}`}
                   location="footer"
                   label="email"
-                  className="inline-flex items-center gap-2 break-all text-espresso-600 transition hover:text-espresso-900"
+                  className="inline-flex min-h-[44px] items-center gap-2 break-all text-espresso-600 transition duration-200 hover:text-espresso-900"
                 >
                   <Mail className="h-3.5 w-3.5 shrink-0" />
                   {CONTACT_EMAIL}
@@ -91,7 +95,7 @@ export default function SiteFooter() {
                   label="booking"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-espresso-600 transition hover:text-espresso-900"
+                  className="inline-flex min-h-[44px] items-center gap-2 text-espresso-600 transition duration-200 hover:text-espresso-900"
                 >
                   <CalendarDays className="h-3.5 w-3.5" />
                   Book a free call
@@ -100,14 +104,14 @@ export default function SiteFooter() {
               <li className="pt-1">
                 <Link
                   href="/privacy"
-                  className="text-espresso-500 transition hover:text-espresso-900"
+                  className="inline-flex min-h-[44px] items-center text-espresso-500 transition duration-200 hover:text-espresso-900"
                 >
                   Privacy
                 </Link>
                 <span className="px-2 text-espresso-300">·</span>
                 <Link
                   href="/terms"
-                  className="text-espresso-500 transition hover:text-espresso-900"
+                  className="inline-flex min-h-[44px] items-center text-espresso-500 transition duration-200 hover:text-espresso-900"
                 >
                   Terms
                 </Link>
@@ -116,7 +120,7 @@ export default function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-8 flex flex-col gap-2 border-t border-espresso-900/10 pt-5 text-[10.5px] leading-relaxed text-espresso-400 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-10 flex flex-col gap-2 border-t border-espresso-900/[0.08] pt-6 text-[10.5px] leading-relaxed text-espresso-400 sm:flex-row sm:items-center sm:justify-between">
           <p>
             © {new Date().getFullYear()} CafeCaption. All rights reserved.
           </p>

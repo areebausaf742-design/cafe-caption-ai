@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowUpRight, Clock, MapPin, MessageCircle } from "lucide-react";
 
+import Reveal from "@/components/motion/Reveal";
 import { ABOUT, CONTACT_NAME, RESPONSE_SHORT, whatsappUrl } from "@/lib/business";
 
 /**
@@ -17,12 +18,15 @@ export default function AboutDeveloper() {
     <section
       id="about"
       aria-labelledby="about-title"
-      className="mx-auto mt-14 w-full max-w-5xl px-4 sm:mt-20 sm:px-6"
+      className="mx-auto mt-16 w-full max-w-5xl px-4 sm:mt-28 sm:px-6"
     >
-      <span className="label">Who you&apos;re working with</span>
+      <Reveal>
+        <span className="label">Who you&apos;re working with</span>
+      </Reveal>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border border-espresso-900/10 bg-cream-50/70">
-        <div className="grid gap-5 p-5 sm:grid-cols-[auto_1fr] sm:gap-6 sm:p-7">
+      <Reveal delay={80}>
+      <div className="hairline mt-4 overflow-hidden rounded-2xl bg-cream-50/75">
+        <div className="grid gap-5 p-5 sm:grid-cols-[auto_1fr] sm:gap-7 sm:p-8">
           {/* ---------------------------- portrait ---------------------------- */}
           <div className="flex items-start gap-4 sm:block">
             {ABOUT.photo ? (
@@ -57,12 +61,12 @@ export default function AboutDeveloper() {
           <div className="min-w-0">
             <h2
               id="about-title"
-              className="font-display text-[19px] font-semibold leading-snug tracking-tight text-espresso-900 sm:text-[23px]"
+              className="font-display text-[20px] font-semibold leading-[1.2] tracking-[-0.015em] text-espresso-900 sm:text-[25px]"
             >
               Hi, I&apos;m {ABOUT.name}.
             </h2>
 
-            <p className="mt-2.5 max-w-xl text-pretty text-[12.5px] leading-relaxed text-espresso-700 sm:text-[13.5px]">
+            <p className="mt-3 max-w-[62ch] text-pretty text-[13px] leading-[1.7] text-espresso-700 sm:text-[13.5px]">
               {ABOUT.bio}
             </p>
 
@@ -102,14 +106,14 @@ export default function AboutDeveloper() {
                 )}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-espresso-900/15 bg-white/70 px-3 py-2 text-[11.5px] font-semibold text-espresso-800 transition hover:border-espresso-900/30 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+                className="tap inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-espresso-900/15 bg-white/70 px-3.5 py-2 text-[11.5px] font-semibold text-espresso-800 hover:border-espresso-900/30 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
               >
                 <MessageCircle className="h-3.5 w-3.5" />
                 Say hello on WhatsApp
               </a>
               <Link
                 href="/#work"
-                className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-espresso-600 underline decoration-caramel-500/40 underline-offset-4 transition hover:text-espresso-900 hover:decoration-caramel-500"
+                className="inline-flex min-h-[44px] items-center gap-1 text-[11.5px] font-semibold text-espresso-600 underline decoration-caramel-500/40 underline-offset-4 transition hover:text-espresso-900 hover:decoration-caramel-500"
               >
                 See recent work
                 <ArrowUpRight className="h-3.5 w-3.5" />
@@ -118,6 +122,7 @@ export default function AboutDeveloper() {
           </div>
         </div>
       </div>
+      </Reveal>
     </section>
   );
 }

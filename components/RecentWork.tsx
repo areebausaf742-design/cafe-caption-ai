@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight, Clock } from "lucide-react";
 
+import Reveal from "@/components/motion/Reveal";
 import { RECENT_WORK, type WorkItem } from "@/lib/business";
 
 /**
@@ -13,20 +14,24 @@ import { RECENT_WORK, type WorkItem } from "@/lib/business";
 export default function RecentWork() {
   return (
     <section id="work" aria-labelledby="work-title">
-      <div className="max-w-2xl">
-        <span className="label">Recent work</span>
-        <h2 id="work-title" className="section-title mt-2.5">
-          Three things, built properly.
-        </h2>
-        <p className="section-lead mt-3">
-          No logo wall. One live product and two builds in progress — you can
-          check the first one yourself by using it.
-        </p>
-      </div>
+      <Reveal>
+        <div className="max-w-2xl">
+          <span className="label">Recent work</span>
+          <h2 id="work-title" className="section-title mt-3">
+            Three things, built properly.
+          </h2>
+          <p className="section-lead mt-4">
+            No logo wall. One live product and two builds in progress — you can
+            check the first one yourself by using it.
+          </p>
+        </div>
+      </Reveal>
 
-      <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {RECENT_WORK.map((item) => (
-          <WorkCard key={item.id} item={item} />
+      <div className="mt-8 grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+        {RECENT_WORK.map((item, index) => (
+          <Reveal key={item.id} delay={index * 90} className="h-full">
+            <WorkCard item={item} />
+          </Reveal>
         ))}
       </div>
     </section>
@@ -37,12 +42,12 @@ function WorkCard({ item }: { item: WorkItem }) {
   const live = item.status === "live";
 
   return (
-    <article className="flex flex-col overflow-hidden rounded-2xl border border-espresso-900/10 bg-cream-50/70 transition hover:border-espresso-900/25 hover:bg-white/70">
+    <article className="hairline flex h-full flex-col overflow-hidden rounded-2xl bg-cream-50/75 transition-shadow duration-300 hover:shadow-[0_24px_60px_-40px_rgba(36,24,18,0.6)]">
       {live ? <BrowserMock /> : <ComingSoonMock title={item.title} />}
 
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-display text-[15px] font-semibold leading-snug tracking-tight text-espresso-900">
+          <h3 className="font-display text-[16px] font-semibold leading-snug tracking-[-0.01em] text-espresso-900">
             {item.title}
           </h3>
           <span
@@ -56,7 +61,7 @@ function WorkCard({ item }: { item: WorkItem }) {
           </span>
         </div>
 
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-espresso-600">
+        <p className="mt-2 text-[12px] leading-[1.65] text-espresso-600">
           {item.summary}
         </p>
 
@@ -75,13 +80,13 @@ function WorkCard({ item }: { item: WorkItem }) {
           {live && item.href ? (
             <Link
               href={item.href}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold text-espresso-800 underline decoration-caramel-500/40 underline-offset-4 transition hover:decoration-caramel-500"
+              className="inline-flex min-h-[44px] items-center gap-1 text-[11.5px] font-semibold text-espresso-800 underline decoration-caramel-500/40 underline-offset-4 transition hover:decoration-caramel-500"
             >
               Try it
               <ArrowUpRight className="h-3.5 w-3.5" />
             </Link>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-[10.5px] text-espresso-500">
+            <span className="inline-flex min-h-[44px] items-center gap-1.5 text-[10.5px] text-espresso-500">
               <Clock className="h-3 w-3" />
               In progress — case study soon
             </span>
