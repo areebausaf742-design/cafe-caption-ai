@@ -42,9 +42,11 @@ export default function PrivacyPage() {
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
             <li>
               <strong>Enquiry details</strong> — the name, café name, city, what
-              you need and any notes you type into the quote form. The site does
-              not send or store these: the form opens WhatsApp with them filled
-              in, and you choose whether to send the message.
+              you need and any notes you type into the quote form. Submitting
+              the form does two things: it keeps a copy of those answers in our
+              own database (Supabase), and it opens WhatsApp with them filled in.
+              The copy exists so an enquiry is not lost when the tab is blocked
+              — it is used only to reply to you.
             </li>
             <li>
               <strong>Photo descriptions</strong> — the text you type into the
@@ -53,8 +55,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Technical basics</strong> — anonymised, hashed request
-              data used to keep the caption studio from being abused. We do not
-              keep raw IP addresses.
+              counters used to keep the caption studio from being abused. We do
+              not keep raw IP addresses.
             </li>
           </ul>
         </section>
@@ -75,10 +77,11 @@ export default function PrivacyPage() {
             Who processes it
           </h2>
           <p className="mt-1.5">
-            The site is hosted on Vercel and captions are generated using
-            Google&apos;s Gemini API. Product analytics run on PostHog. These
-            providers process data on our behalf. No other third party receives
-            your details.
+            The site is hosted on Vercel, enquiries are stored in Supabase, and
+            captions are generated using Google&apos;s Gemini API. Abuse
+            protection keeps hashed counters in Upstash Redis. Product analytics
+            run on PostHog. These providers process data on our behalf. No other
+            third party receives your details.
           </p>
         </section>
 

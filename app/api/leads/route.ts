@@ -71,7 +71,7 @@ async function storeLead(
 }
 
 export async function POST(request: Request) {
-  const rate = rateLimit(request, LIMIT);
+  const rate = await rateLimit(request, LIMIT);
 
   if (!rate.allowed) {
     const response = NextResponse.json(

@@ -62,7 +62,14 @@ npm run dev                  # http://localhost:3000
 
 `GEMINI_API_KEY` in `.env.local` and in Vercel → Settings → Environment Variables.
 Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
-Optional: `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
+Optional model overrides, all read from the environment so a retired id is a
+config change rather than a deploy: `GEMINI_MODEL` (default `gemini-2.5-flash`),
+`GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`) and
+`GEMINI_LAST_RESORT_MODEL` (default `gemini-3.8-flash`).
+
+> The three defaults are the ids that were current when this was written; they
+> cannot be verified without a live key. Before a launch, check them against
+> `https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY`.
 
 > ⚠️ Never prefix the key with `NEXT_PUBLIC_`. `app/api/generate/route.ts` starts
 > with `import "server-only"`, so the build fails if it is ever imported into a
@@ -110,14 +117,18 @@ treatment and the badge on the site.
 
 ### 4. Lead capture (WhatsApp by default, Supabase optional)
 
-The quote form needs **no backend**. On submit it validates the four answers,
-builds a WhatsApp message containing the visitor's name, café, city and what
-they need, and opens it in a new tab — the visitor presses send, and you reply
-in a normal chat. Nothing is stored anywhere, which is also what the form tells
-visitors.
+The quote form uses **two channels, in this order**. On submit it validates the
+four answers, POSTs a copy to `/api/leads`, and *then* opens WhatsApp with the
+same answers written out — the chat is how a café owner actually replies, the
+row in the database is what stops an enquiry disappearing when the tab is
+blocked, closed, or opened inside an in-app browser.
 
-If you later want a database copy, `POST /api/leads` is already built and
-rate-limited:
+The POST is deliberately not awaited: `window.open` only survives popup blocking
+while it runs inside the same user gesture, so nothing may sit between the click
+and the tab. It uses `keepalive: true`, and a failure changes nothing the visitor
+sees. `app/privacy` says all of this in the same words.
+
+To actually keep the copy, two minutes of setup:
 
 1. Run **`supabase/schema.sql`** in Supabase → SQL Editor. It creates
    `public.leads` with insert-only RLS (no public reads).
@@ -129,10 +140,12 @@ SUPABASE_ANON_KEY=<anon or publishable key>
 # SUPABASE_LEADS_TABLE=leads
 ```
 
-Without these the form still submits successfully: the visitor is shown a
-one-tap **“Send it on WhatsApp”** handoff instead of an error, so no enquiry is
-lost — you just don't keep a database record. Check the server log for
-`[leads] Supabase is not configured` to confirm.
+Without these the form still submits successfully and the visitor is shown a
+one-tap **“Send it on WhatsApp”** handoff instead of an error — the API returns
+`{ ok: true, stored: false }` and the server log says
+`[leads] Supabase is not configured`. So the wiring is live today and starts
+keeping records the moment the two variables exist; nothing in the client has to
+change.
 
 The form does not call this endpoint today — it hands straight to WhatsApp.
 Wire it back by posting the same fields from `components/LeadForm.tsx` if you
@@ -275,6 +288,16 @@ Rate limit: **12 requests / 10 min per IP**, plus a tighter **6 photo requests
 / 10 min** bucket, because images cost far more upstream quota than text.
 Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
+**Shared, not per-instance.** On Vercel every request can land on a different
+isolate, so a module-scope `Map` is only a per-instance counter — a burst spread
+across cold starts walks straight past it, which is exactly the abuse that costs
+money upstream. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+(free tier) and the limiter runs a fixed window in Redis over its REST API — no
+SDK, one `fetch`, `INCR` + `PEXPIRE NX` + `PTTL` in a single pipeline. Without
+them, or during a Redis outage, it degrades to the in-memory map and logs once
+(`[rate-limit] Upstash unavailable`): a broken counter is never the reason a
+visitor can't use the studio.
+
 ### Google Local SEO prompts (`app/api/generate/prompts.ts`)
 
 All prompts, schemas and normalisers live in one server-only module, so the
@@ -361,9 +384,12 @@ page for this step:
 - **For download** a separate 1024px `QRCodeCanvas` is mounted off-screen and
   exported with `canvas.toBlob()` → `<a download="cafe-menu-qr.png">`, with a
   `toDataURL` fallback for browsers that refuse `toBlob` on large canvases
-- The URL lives in `MENU_DEMO_URL` (`lib/business.ts`) and currently points at
-  `https://cafecaption.tech/menu/demo`; a real order swaps that one constant for
-  the café's own live menu URL
+- The URL lives in `MENU_DEMO_URL` (`lib/business.ts`), built from
+  `MENU_DEMO_PATH` + `NEXT_PUBLIC_SITE_URL` rather than a hardcoded domain, so
+  the code resolves on whichever host is serving the app. It points at
+  **`/menu/demo`**, which is a real page (`app/menu/demo/page.tsx`) — scanning
+  the demo QR lands on a working sample menu instead of the 404 it used to. A
+  real order swaps that one constant for the café's own live menu URL
 
 ### WhatsApp ordering
 
@@ -408,9 +434,12 @@ photo can't hijack the prompt.
 ### `POST /api/leads`
 
 Accepts the contact form payload, validates it, rejects honeypot hits and stores
-the lead when Supabase is configured. Rate limit: **6 / 10 min per IP**.
-Always returns `200 { ok: true, stored }` for a valid submission so the UI can
-offer the WhatsApp handoff.
+the lead when Supabase is configured. `whatsapp` is optional — the form has no
+phone field (the number arrives with the chat), and an enforced `NOT NULL` only
+ever turned a usable enquiry into a rejected one. Rate limit: **6 / 10 min per
+IP**, shared across instances when Upstash is configured. Always returns
+`200 { ok: true, stored }` for a valid submission so the UI can offer the
+WhatsApp handoff.
 
 ---
 
@@ -479,6 +508,7 @@ app/
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
+  menu/demo/page.tsx       # the page the demo QR points at (server component)
   privacy/, terms/         # legal pages
   opengraph-image.tsx      # generated social card
   robots.ts, sitemap.ts, manifest.ts
@@ -489,6 +519,8 @@ components/
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
   DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
+  menu/MenuCard.tsx        # menu layout, shared by the studio and /menu/demo
+  menu/DemoQr.tsx          # the QR island on the demo page
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
@@ -620,8 +652,10 @@ only file that imports framer-motion apart from `MotionRoot` and the copy button
 ## Deploy to Vercel
 
 1. Push the repo to GitHub and import it at [vercel.com/new](https://vercel.com/new).
-2. Add `GEMINI_API_KEY`, `NEXT_PUBLIC_SITE_URL` (and the Supabase pair if you're
-   using lead storage).
+2. Add `GEMINI_API_KEY` and `NEXT_PUBLIC_SITE_URL`. Strongly recommended:
+   `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (shared rate limits) and
+   `SUPABASE_URL` + `SUPABASE_ANON_KEY` (lead storage). Without the last pair the
+   quote form still works, it just doesn't keep a record.
 3. Deploy. Environment changes only apply to **new** deployments — redeploy
    after adding or editing variables.
 

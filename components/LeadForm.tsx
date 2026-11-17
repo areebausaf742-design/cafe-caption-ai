@@ -10,15 +10,37 @@ import {
 
 import { track } from "@/lib/analytics";
 import { CONTACT_NAME, whatsappUrl } from "@/lib/business";
-import { INTERESTS, type Interest } from "@/lib/leads";
+import { INTERESTS, type Interest, type LeadInput } from "@/lib/leads";
 
 /**
  * "Get a quote in 24h" form.
  *
- * No database, no backend call: on submit it opens WhatsApp with the visitor's
- * name, café, city and what they need already written out. They press send —
- * the enquiry is a normal chat, which is how a café owner actually replies.
+ * Two channels, in this order: a copy of the four answers is POSTed to
+ * `/api/leads` (Supabase, when it is configured), then WhatsApp opens with the
+ * same answers already written out. The chat is how a café owner actually
+ * replies; the row in the database is what stops an enquiry disappearing when
+ * the tab doesn't open, the visitor closes it, or the in-app browser blocks it.
  */
+
+/**
+ * Fire-and-forget lead capture.
+ *
+ * Deliberately not awaited: `window.open` only survives popup blocking while it
+ * runs inside the same user gesture, so this must not put an await between the
+ * click and the tab. `keepalive` lets the request finish even if the visitor
+ * switches to WhatsApp immediately. If it fails, nothing the visitor sees
+ * changes — the chat is still the real channel.
+ */
+function saveLead(input: LeadInput) {
+  void fetch("/api/leads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    keepalive: true,
+  }).catch(() => {
+    /* the WhatsApp handoff is unaffected */
+  });
+}
 
 interface FormState {
   name: string;
@@ -83,6 +105,14 @@ export default function LeadForm() {
     ].filter((line): line is string => Boolean(line));
 
     const url = whatsappUrl(lines.join("\n"));
+
+    saveLead({
+      name,
+      cafeName,
+      city,
+      interest: form.interest,
+      message: form.message.trim() || undefined,
+    });
 
     track({ name: "lead_submit", props: { interest: form.interest } });
     setSentUrl(url);
@@ -250,8 +280,8 @@ export default function LeadForm() {
         </button>
 
         <p className="text-center text-[10.5px] leading-[1.65] text-espresso-500">
-          Opens WhatsApp with your details filled in — nothing is stored on this
-          site.
+          Opens WhatsApp with your details filled in — a copy is kept here too,
+          so the enquiry isn&apos;t lost if the tab doesn&apos;t open.
         </p>
       </form>
     </div>

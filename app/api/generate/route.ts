@@ -118,8 +118,14 @@ const FALLBACK_MODEL =
  * Last resort, only when every configured model 404s (a retired id, a typo in
  * GEMINI_MODEL). The newest stable Flash generation keeps the studio working
  * without a redeploy.
+ *
+ * All three ids are overridable, so a retired or renamed model is an env change
+ * rather than a code change — but none of the defaults can be verified from a
+ * sandbox without the live API key. Check them against the model list once
+ * before a launch: `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"`.
  */
-const LAST_RESORT_MODEL = "gemini-3.8-flash";
+const LAST_RESORT_MODEL =
+  process.env.GEMINI_LAST_RESORT_MODEL?.trim() || "gemini-3.8-flash";
 
 /**
  * Output ceiling. Gemini 2.5 models spend part of this budget on *thinking*
@@ -815,7 +821,7 @@ export async function POST(request: Request) {
   // 1. Check the budget *without* spending a token. A request that turns out to
   //    be malformed — or can't run because the key is missing — shouldn't cost
   //    the visitor one of their generations.
-  let rate = peekRateLimit(request, LIMIT);
+  let rate = await peekRateLimit(request, LIMIT);
   if (!rate.allowed) {
     return fail(
       429,
@@ -992,7 +998,7 @@ export async function POST(request: Request) {
 
   // 3c. Photos are expensive upstream: they get a second, tighter budget.
   if (photo) {
-    const photoRate = rateLimit(request, PHOTO_LIMIT);
+    const photoRate = await rateLimit(request, PHOTO_LIMIT);
     if (!photoRate.allowed) {
       return fail(
         429,
@@ -1029,7 +1035,7 @@ export async function POST(request: Request) {
   // 5. Everything checks out. Spend one token and run the tool — fast try,
   //    longer retry, then a cheaper fallback model. (A peek that allowed means
   //    the spend can only land on the limit itself, which is still allowed.)
-  rate = rateLimit(request, LIMIT);
+  rate = await rateLimit(request, LIMIT);
   try {
     let payload: GenerateResponse;
 
