@@ -23,6 +23,12 @@ const TABLE = process.env.SUPABASE_LEADS_TABLE || "leads";
 
 const LIMIT = { namespace: "leads", max: 6, windowMs: 10 * 60 * 1000 };
 
+/** Four short answers. 16 KB is already an order of magnitude more than that. */
+const MAX_BODY_BYTES = 16_384;
+
+/** A slow Supabase must not hold the function open until Vercel kills it. */
+const SUPABASE_TIMEOUT_MS = 5_000;
+
 async function storeLead(
   lead: LeadDraft,
   pageUrl: string | null,
@@ -48,6 +54,7 @@ async function storeLead(
         source: "cafe-caption",
         page_url: pageUrl,
       }),
+      signal: AbortSignal.timeout(SUPABASE_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -77,6 +84,17 @@ export async function POST(request: Request) {
     );
     response.headers.set("Retry-After", String(rate.retryAfter));
     return withRateHeaders(response, rate);
+  }
+
+  const declaredBytes = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
+    return withRateHeaders(
+      NextResponse.json(
+        { error: "That message was too long to send.", code: "REQUEST_TOO_LARGE" },
+        { status: 413 },
+      ),
+      rate,
+    );
   }
 
   let body: unknown;

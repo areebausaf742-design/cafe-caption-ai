@@ -32,6 +32,7 @@ import type {
   Tone,
 } from "@/lib/types";
 import {
+  peekRateLimit,
   rateLimit,
   withRateHeaders,
   type RateLimitResult,
@@ -170,6 +171,18 @@ const PHOTO_RATE_LIMIT_MAX = 6;
 /** Requests allowed per IP inside the window. */
 const LIMIT = { namespace: "generate", max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW_MS };
 
+/**
+ * Hard ceiling on the request body.
+ *
+ * An image is already capped at ~2.1M base64 characters, so a bigger body is
+ * either a mistake or an attempt to make the function parse megabytes of JSON
+ * before validation can say no. Vercel allows 4.5 MB; we don't need it.
+ */
+const MAX_BODY_BYTES = MAX_IMAGE_BASE64_LENGTH + 65_536;
+
+/** In production, errors describe the symptom — not our env vars or models. */
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 /** Photos cost far more quota upstream, so they get their own tighter bucket. */
 const PHOTO_LIMIT = {
   namespace: "generate-photo",
@@ -260,12 +273,57 @@ function parsePhoto(raw: unknown): PhotoParse {
     };
   }
 
+  // The MIME type is the client's claim; the file signature is the file's. A
+  // rename or a crafted request can make the two disagree, and forwarding a
+  // non-image to the model wastes an attempt (and a rate-limit token).
+  const type = mimeType.trim().toLowerCase();
+  if (!hasValidImageHeader(clean, type)) {
+    return {
+      ok: false,
+      status: 415,
+      code: "UNSUPPORTED_IMAGE",
+      message:
+        "That file isn't a photo we can read. Try a JPG, PNG or WebP export of it.",
+    };
+  }
+
   const bytes = Math.floor((clean.replace(/=+$/, "").length * 3) / 4);
 
-  return {
-    ok: true,
-    photo: { mimeType: mimeType.trim().toLowerCase(), data: clean, bytes },
-  };
+  return { ok: true, photo: { mimeType: type, data: clean, bytes } };
+}
+
+/**
+ * Does the payload actually begin with the file signature its type claims?
+ *
+ * Twenty-four base64 characters decode to 18 bytes — enough for every header we
+ * care about: JPEG's SOI+marker, PNG's 8-byte magic, WebP's RIFF/WEBP pair, and
+ * the ISO base-media `ftyp` box that HEIC and HEIF both use.
+ */
+function hasValidImageHeader(base64: string, mimeType: string): boolean {
+  const head = Buffer.from(base64.slice(0, 24), "base64");
+  if (head.length < 12) return false;
+
+  switch (mimeType) {
+    case "image/jpeg":
+      return head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    case "image/png":
+      return (
+        head[0] === 0x89 &&
+        head[1] === 0x50 &&
+        head[2] === 0x4e &&
+        head[3] === 0x47
+      );
+    case "image/webp":
+      return (
+        head.subarray(0, 4).toString("latin1") === "RIFF" &&
+        head.subarray(8, 12).toString("latin1") === "WEBP"
+      );
+    case "image/heic":
+    case "image/heif":
+      return head.subarray(4, 8).toString("latin1") === "ftyp";
+    default:
+      return false;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -754,8 +812,10 @@ function failureCopy(tool: StudioTool, hasPhoto: boolean): ToolCopy {
 /* -------------------------------------------------------------------------- */
 
 export async function POST(request: Request) {
-  // 1. Per-IP rate limit before doing any expensive work.
-  const rate = rateLimit(request, LIMIT);
+  // 1. Check the budget *without* spending a token. A request that turns out to
+  //    be malformed — or can't run because the key is missing — shouldn't cost
+  //    the visitor one of their generations.
+  let rate = peekRateLimit(request, LIMIT);
   if (!rate.allowed) {
     return fail(
       429,
@@ -765,7 +825,19 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Parse + validate the body.
+  // 2. Refuse an oversized body before reading it. `content-length` is optional
+  //    and can lie — but when it's there it's free, and Vercel caps the rest.
+  const declaredBytes = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
+    return fail(
+      413,
+      "That request was too large to process. Try a smaller photo.",
+      "REQUEST_TOO_LARGE",
+      { rate },
+    );
+  }
+
+  // 3. Parse + validate the body.
   let body: unknown;
   try {
     body = await request.json();
@@ -773,7 +845,15 @@ export async function POST(request: Request) {
     return fail(400, "Request body must be valid JSON.", "INVALID_JSON", { rate });
   }
 
-  const fields = (body ?? {}) as {
+  // `null`, `"foo"` and `[]` all parse as JSON but are not a request. Without
+  // this, `(body ?? {})` below turned `[]` into a photo-less captions request.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return fail(400, "Request body must be a JSON object.", "INVALID_JSON", {
+      rate,
+    });
+  }
+
+  const fields = body as {
     type?: unknown;
     description?: unknown;
     tone?: unknown;
@@ -800,7 +880,7 @@ export async function POST(request: Request) {
   const cleanCafeName = cleanOptional(fields.cafeName, MAX_CAFE_NAME_LENGTH);
   const cleanCity = cleanOptional(fields.city, MAX_CITY_LENGTH);
 
-  // 2a. The photo — validated before anything expensive runs. Only two tools
+  // 3a. The photo — validated before anything expensive runs. Only two tools
   // read images: captions (optional) and the menu digitiser (required).
   const photoResult = parsePhoto(fields.image);
   if (!photoResult.ok) {
@@ -820,7 +900,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2b. Per-tool input validation.
+  // 3b. Per-tool input validation.
   const copy = failureCopy(tool, Boolean(photo));
 
   if (tool === "captions") {
@@ -910,7 +990,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // 2c. Photos are expensive upstream: they get a second, tighter budget.
+  // 3c. Photos are expensive upstream: they get a second, tighter budget.
   if (photo) {
     const photoRate = rateLimit(request, PHOTO_LIMIT);
     if (!photoRate.allowed) {
@@ -926,21 +1006,30 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Fail fast and clearly if the key is missing (the #1 setup mistake).
+  // 4. Fail fast and clearly if the key is missing (the #1 setup mistake). This
+  //    is a server problem, not the visitor's, so it must not cost a token —
+  //    and production never gets told which variable to set.
   if (!apiKey) {
     console.error("[generate] GEMINI_API_KEY is not set.");
     return fail(
       500,
-      "The server is missing its Gemini API key, so nothing can be generated yet.",
+      IS_PRODUCTION
+        ? "The generator isn't connected yet. Nothing was used up — please try again later."
+        : "The server is missing its Gemini API key, so nothing can be generated yet.",
       "MISSING_API_KEY",
       {
-        hint: "Add GEMINI_API_KEY to .env.local (local) or Vercel → Settings → Environment Variables, then restart the server.",
+        hint: IS_PRODUCTION
+          ? undefined
+          : "Add GEMINI_API_KEY to .env.local (local) or Vercel → Settings → Environment Variables, then restart the server.",
         rate,
       },
     );
   }
 
-  // 4. Run the tool — fast try, longer retry, then a cheaper fallback model.
+  // 5. Everything checks out. Spend one token and run the tool — fast try,
+  //    longer retry, then a cheaper fallback model. (A peek that allowed means
+  //    the spend can only land on the limit itself, which is still allowed.)
+  rate = rateLimit(request, LIMIT);
   try {
     let payload: GenerateResponse;
 
@@ -1150,12 +1239,16 @@ export async function POST(request: Request) {
     if (failure.kind === "model_missing") {
       return fail(
         502,
-        `No usable Gemini model was available (tried ${MODEL} and ${FALLBACK_MODEL}).`,
+        IS_PRODUCTION
+          ? "The generation engine isn't reachable right now. Please try again shortly."
+          : `No usable Gemini model was available (tried ${MODEL} and ${FALLBACK_MODEL}).`,
         "UPSTREAM_MODEL_NOT_FOUND",
         {
           hint: devHint
             ? detail
-            : "Set GEMINI_MODEL to a model your API key can access.",
+            : IS_PRODUCTION
+              ? undefined
+              : "Set GEMINI_MODEL to a model your API key can access.",
           reason: "model_missing",
           rate,
         },
