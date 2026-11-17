@@ -68,7 +68,7 @@ const config: Config = {
       },
       keyframes: {
         "fade-up": {
-          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "0%": { opacity: "0", transform: "translateY(14px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
         "fade-in": {
@@ -92,7 +92,9 @@ const config: Config = {
         },
       },
       animation: {
-        "fade-up": "fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both",
+        // Slower than a default reveal on purpose: expo-out over 0.7s is the
+        // difference between "a div faded in" and "the page settled".
+        "fade-up": "fade-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both",
         "fade-in": "fade-in 0.4s ease-out both",
         shimmer: "shimmer 1.6s infinite",
         steam: "steam 3.5s ease-in-out infinite",

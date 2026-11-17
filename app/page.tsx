@@ -93,7 +93,7 @@ export default function HomePage() {
 
           <h1
             className="animate-fade-up mx-auto mt-5 max-w-[19ch] text-balance font-display text-[2.15rem] font-semibold leading-[1.05] tracking-[-0.025em] text-espresso-900 text-shadow-soft sm:max-w-2xl sm:text-[3.4rem]"
-            style={{ animationDelay: "60ms" }}
+            style={{ animationDelay: "80ms" }}
           >
             Captions that make people{" "}
             <span className="italic text-caramel-600">walk in.</span>
@@ -101,7 +101,7 @@ export default function HomePage() {
 
           <p
             className="animate-fade-up mx-auto mt-5 max-w-[46ch] text-pretty text-[14px] leading-[1.7] text-espresso-600 sm:text-[15.5px]"
-            style={{ animationDelay: "120ms" }}
+            style={{ animationDelay: "160ms" }}
           >
             Three tools, one studio. Upload a photo — or just describe it — for
             three considered captions. Paste a Google review for three replies,
@@ -113,7 +113,7 @@ export default function HomePage() {
 
         <div
           className="animate-fade-up mt-7 flex flex-wrap items-center justify-center gap-2.5"
-          style={{ animationDelay: "180ms" }}
+          style={{ animationDelay: "240ms" }}
         >
           <BookingLink location="hero" variant="primary" />
           <TrackedLink
@@ -129,14 +129,14 @@ export default function HomePage() {
 
         <div
           className="animate-fade-up mt-8 sm:mt-10"
-          style={{ animationDelay: "240ms" }}
+          style={{ animationDelay: "300ms" }}
         >
           <CaptionStudio />
         </div>
 
         <ul
           className="animate-fade-up mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[10.5px] tracking-[0.01em] text-espresso-500"
-          style={{ animationDelay: "300ms" }}
+          style={{ animationDelay: "360ms" }}
         >
           {TRUST_POINTS.map((point, index) => (
             <li key={point} className="flex items-center gap-3">

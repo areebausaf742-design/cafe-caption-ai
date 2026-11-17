@@ -18,23 +18,47 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
-    scroll-behavior: smooth;
+    /* No grey rectangle flashing over a button when it is tapped. */
+    -webkit-tap-highlight-color: transparent;
+    /* The paper colour lives on <html> so the fixed glow layer below can sit
+       above it and below the content (see body::before). */
+    @apply bg-cream-100;
+  }
+
+  /* Anchor jumps glide only while nothing else is driving the scroll: once
+     Lenis is running it marks <html class="lenis"> and owns the motion, and two
+     scroll animations fighting each other is the opposite of smooth. */
+  @media (prefers-reduced-motion: no-preference) {
+    html:not(.lenis) {
+      scroll-behavior: smooth;
+    }
   }
 
   body {
-    @apply bg-cream-100 text-espresso-900 antialiased;
+    @apply text-espresso-900 antialiased;
     font-family: var(--font-sans);
     /* Body copy breathes: 1.65 line-height is the floor everywhere. */
     line-height: 1.65;
     text-rendering: optimizeLegibility;
     /* The studio goes edge-to-edge on phones; clip anything that leans out. */
     overflow-x: clip;
-    /* Warm, layered light: amber steam top-left, cocoa shadow bottom-right */
+  }
+
+  /* Warm, layered light: amber steam top-left, cocoa shadow bottom-right.
+     A genuinely fixed *layer* rather than `background-attachment: fixed`: the
+     old way makes the browser repaint the full viewport on every scroll frame
+     (the classic "why is this page heavy on Safari and mid-range Android"),
+     this way the gradient is rasterised once and then just stays put. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background-image:
       radial-gradient(60rem 45rem at 6% -12%, rgba(237, 187, 124, 0.26), transparent 60%),
       radial-gradient(48rem 40rem at 94% 6%, rgba(183, 199, 165, 0.2), transparent 62%),
       radial-gradient(55rem 45rem at 50% 112%, rgba(74, 53, 39, 0.13), transparent 65%);
-    background-attachment: fixed;
   }
 
   p {
@@ -45,9 +69,19 @@
     @apply bg-caramel-200 text-espresso-900;
   }
 
-  /* Anchor links shouldn't hide under the sticky header */
+  /* Anchor links shouldn't hide under the sticky header. Lenis reads this too,
+     so eased jumps and native ones land in exactly the same place. */
   [id] {
     scroll-margin-top: 5.5rem;
+  }
+
+  /* A tap should feel immediate, not wait to see if it is a double-tap zoom. */
+  a,
+  button,
+  [role="button"],
+  summary,
+  label {
+    touch-action: manipulation;
   }
 
   /* Respect users who prefer less motion */
@@ -97,9 +131,13 @@
     pointer-events: none;
   }
 
-  /* Frosted paper card used for the main studio surface */
+  /* The main studio surface. Deliberately opaque paper rather than frosted
+     glass: a backdrop-filter this large has to be re-blurred on every scroll
+     frame as it travels over the warm background, which is exactly the kind of
+     hidden cost that turns into dropped frames on a mid-range phone. At 92%
+     opacity nobody can tell the difference. */
   .paper {
-    @apply hairline relative rounded-[1.75rem] bg-cream-50/85 backdrop-blur-xl
+    @apply hairline relative rounded-[1.75rem] bg-cream-50/[0.94]
       sm:rounded-[2rem];
     box-shadow:
       0 1px 2px rgba(var(--ink), 0.04),
@@ -108,7 +146,7 @@
   }
 
   .card {
-    @apply hairline relative rounded-2xl bg-cream-50/80 backdrop-blur-sm sm:rounded-3xl;
+    @apply hairline relative rounded-2xl bg-cream-50/[0.92] sm:rounded-3xl;
     box-shadow:
       0 1px 2px rgba(var(--ink), 0.03),
       0 14px 34px -22px rgba(var(--ink), 0.22);
@@ -256,7 +294,9 @@
 }
 
 @layer utilities {
-  /* Hero light — three soft pools of caramel/amber behind the headline */
+  /* Hero light — three soft pools of caramel/amber behind the headline.
+     No `filter: blur()`: the gradient already fades to nothing, so the blur only
+     bought a full-size offscreen buffer the compositor had to keep alive. */
   .glow-warm {
     background:
       radial-gradient(
@@ -264,7 +304,6 @@
         rgba(var(--amber-glow), 0.55),
         rgba(var(--amber-glow), 0) 100%
       );
-    filter: blur(18px);
   }
 
   .text-shadow-soft {

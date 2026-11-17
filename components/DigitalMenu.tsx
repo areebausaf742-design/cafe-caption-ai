@@ -32,6 +32,7 @@ import {
   type StudioError,
 } from "@/lib/studio-client";
 import { track } from "@/lib/analytics";
+import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { MENU_DEMO_URL } from "@/lib/business";
 import type { DigitalMenu as MenuData, MenuItem } from "@/lib/types";
 
@@ -288,7 +289,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     if (status !== "success") return;
     if (typeof window === "undefined" || window.innerWidth >= 640) return;
     const id = window.setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (resultsRef.current) smoothScrollTo(resultsRef.current);
     }, 120);
     return () => window.clearTimeout(id);
   }, [status]);

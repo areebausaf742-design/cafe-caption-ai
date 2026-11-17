@@ -32,6 +32,7 @@ import {
   type Tone,
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import { smoothScrollTo } from "@/lib/smooth-scroll";
 import PhotoDropzone from "@/components/PhotoDropzone";
 import dynamic from "next/dynamic";
 import StudioTabs, { type StudioTab } from "@/components/studio/StudioTabs";
@@ -76,6 +77,13 @@ const PHOTO_LOADING_STEPS = [
 ] as const;
 
 const LOADING_STEP_COUNT = TEXT_LOADING_STEPS.length;
+
+/* A panel stays mounted once it has been visited, so `hidden` on its own would
+   let a second visit snap into place with no transition. Animating to this
+   resting "out" state while hidden means every switch eases in from the same
+   place, whether it is the first time or the fifth. */
+const PANEL_VISIBLE = { opacity: 1, y: 0 };
+const PANEL_HIDDEN = { opacity: 0, y: 6 };
 
 /** One line per tab, so the studio never looks like the same page twice. */
 const STUDIO_HEADINGS: Record<StudioTab, string> = {
@@ -390,7 +398,7 @@ export default function CaptionStudio() {
     if (status !== "success") return;
     if (typeof window === "undefined" || window.innerWidth >= 640) return;
     const id = window.setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (resultsRef.current) smoothScrollTo(resultsRef.current);
     }, 120);
     return () => window.clearTimeout(id);
   }, [status]);
@@ -440,9 +448,9 @@ export default function CaptionStudio() {
           role="tabpanel"
           aria-labelledby="studio-tab-captions"
           hidden={tab !== "captions"}
-          initial={reduced ? false : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          initial={reduced ? false : PANEL_HIDDEN}
+          animate={tab === "captions" ? PANEL_VISIBLE : PANEL_HIDDEN}
+          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
         >
           <form
             onSubmit={(event) => {
@@ -944,9 +952,9 @@ export default function CaptionStudio() {
           role="tabpanel"
           aria-labelledby="studio-tab-seo"
           hidden={tab !== "seo"}
-          initial={reduced ? false : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          initial={reduced ? false : PANEL_HIDDEN}
+          animate={tab === "seo" ? PANEL_VISIBLE : PANEL_HIDDEN}
+          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
         >
           <LocalSeoStudio
             cafeName={cafeName}
@@ -967,9 +975,9 @@ export default function CaptionStudio() {
           role="tabpanel"
           aria-labelledby="studio-tab-menu"
           hidden={tab !== "menu"}
-          initial={reduced ? false : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          initial={reduced ? false : PANEL_HIDDEN}
+          animate={tab === "menu" ? PANEL_VISIBLE : PANEL_HIDDEN}
+          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
         >
           <DigitalMenuStudio cafeName={cafeName} />
         </m.div>

@@ -20,7 +20,10 @@ const NAV = [
  */
 export default function SiteHeader() {
   return (
-    <header className="sticky top-0 z-40 bg-cream-100/70 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-cream-100/60">
+    // Frosted glass, at a radius the compositor can afford: the header re-blurs
+    // whatever scrolls beneath it on every frame, and cost grows with the square
+    // of the blur radius. 16px still reads as glass and is ~2x cheaper than 24.
+    <header className="sticky top-0 z-40 bg-cream-100/80 backdrop-blur-lg backdrop-saturate-150 supports-[backdrop-filter]:bg-cream-100/70">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:h-16 sm:px-6">
         <Link
           href="/"
