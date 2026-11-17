@@ -62,7 +62,14 @@ npm run dev                  # http://localhost:3000
 
 `GEMINI_API_KEY` in `.env.local` and in Vercel → Settings → Environment Variables.
 Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey).
-Optional: `GEMINI_MODEL` (defaults to `gemini-2.5-flash`).
+Optional model overrides, all read from the environment so a retired id is a
+config change rather than a deploy: `GEMINI_MODEL` (default `gemini-2.5-flash`),
+`GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`) and
+`GEMINI_LAST_RESORT_MODEL` (default `gemini-3.8-flash`).
+
+> The three defaults are the ids that were current when this was written; they
+> cannot be verified without a live key. Before a launch, check them against
+> `https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY`.
 
 > ⚠️ Never prefix the key with `NEXT_PUBLIC_`. `app/api/generate/route.ts` starts
 > with `import "server-only"`, so the build fails if it is ever imported into a
@@ -110,14 +117,18 @@ treatment and the badge on the site.
 
 ### 4. Lead capture (WhatsApp by default, Supabase optional)
 
-The quote form needs **no backend**. On submit it validates the four answers,
-builds a WhatsApp message containing the visitor's name, café, city and what
-they need, and opens it in a new tab — the visitor presses send, and you reply
-in a normal chat. Nothing is stored anywhere, which is also what the form tells
-visitors.
+The quote form uses **two channels, in this order**. On submit it validates the
+four answers, POSTs a copy to `/api/leads`, and *then* opens WhatsApp with the
+same answers written out — the chat is how a café owner actually replies, the
+row in the database is what stops an enquiry disappearing when the tab is
+blocked, closed, or opened inside an in-app browser.
 
-If you later want a database copy, `POST /api/leads` is already built and
-rate-limited:
+The POST is deliberately not awaited: `window.open` only survives popup blocking
+while it runs inside the same user gesture, so nothing may sit between the click
+and the tab. It uses `keepalive: true`, and a failure changes nothing the visitor
+sees. `app/privacy` says all of this in the same words.
+
+To actually keep the copy, two minutes of setup:
 
 1. Run **`supabase/schema.sql`** in Supabase → SQL Editor. It creates
    `public.leads` with insert-only RLS (no public reads).
@@ -129,14 +140,14 @@ SUPABASE_ANON_KEY=<anon or publishable key>
 # SUPABASE_LEADS_TABLE=leads
 ```
 
-Without these the form still submits successfully: the visitor is shown a
-one-tap **“Send it on WhatsApp”** handoff instead of an error, so no enquiry is
-lost — you just don't keep a database record. Check the server log for
-`[leads] Supabase is not configured` to confirm.
-
-The form does not call this endpoint today — it hands straight to WhatsApp.
-Wire it back by posting the same fields from `components/LeadForm.tsx` if you
-want rows in a table.
+The same two variables also switch on **hosted menus** (`/menu/[slug]`), which
+need the `menus` half of the same schema file. Without them the form still
+submits successfully and the visitor is shown a
+one-tap **“Send it on WhatsApp”** handoff instead of an error — the API returns
+`{ ok: true, stored: false }` and the server log says
+`[leads] Supabase is not configured`. So the wiring is live today and starts
+keeping records the moment the two variables exist; nothing in the client has to
+change.
 
 Enquiries store: name, café, city, WhatsApp, email, interest, message, source and
 referring page. Read them in the Supabase table editor:
@@ -275,6 +286,16 @@ Rate limit: **12 requests / 10 min per IP**, plus a tighter **6 photo requests
 / 10 min** bucket, because images cost far more upstream quota than text.
 Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
+**Shared, not per-instance.** On Vercel every request can land on a different
+isolate, so a module-scope `Map` is only a per-instance counter — a burst spread
+across cold starts walks straight past it, which is exactly the abuse that costs
+money upstream. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+(free tier) and the limiter runs a fixed window in Redis over its REST API — no
+SDK, one `fetch`, `INCR` + `PEXPIRE NX` + `PTTL` in a single pipeline. Without
+them, or during a Redis outage, it degrades to the in-memory map and logs once
+(`[rate-limit] Upstash unavailable`): a broken counter is never the reason a
+visitor can't use the studio.
+
 ### Google Local SEO prompts (`app/api/generate/prompts.ts`)
 
 All prompts, schemas and normalisers live in one server-only module, so the
@@ -361,9 +382,71 @@ page for this step:
 - **For download** a separate 1024px `QRCodeCanvas` is mounted off-screen and
   exported with `canvas.toBlob()` → `<a download="cafe-menu-qr.png">`, with a
   `toDataURL` fallback for browsers that refuse `toBlob` on large canvases
-- The URL lives in `MENU_DEMO_URL` (`lib/business.ts`) and currently points at
-  `https://cafecaption.tech/menu/demo`; a real order swaps that one constant for
-  the café's own live menu URL
+- The URL lives in `MENU_DEMO_URL` (`lib/business.ts`), built from
+  `MENU_DEMO_PATH` + `NEXT_PUBLIC_SITE_URL` rather than a hardcoded domain, so
+  the code resolves on whichever host is serving the app. It points at
+  **`/menu/demo`**, which is a real page (`app/menu/demo/page.tsx`) — scanning
+  the demo QR lands on a working sample menu instead of the 404 it used to.
+- Once an owner presses **Publish this menu**, the same QR switches to their own
+  live URL — the code, the URL printed under it and the downloaded PNG all read
+  one derived value (`published?.url ?? MENU_DEMO_URL`), so they can never
+  disagree
+
+### Hosted menus (`/menu/[slug]`)
+
+Photographing a printed card produced a preview and a QR that pointed at a demo.
+Now the preview can go live: **Publish this menu** creates a real page at
+`/menu/<slug>`, and the QR, the printed link and the downloaded PNG all follow it.
+
+The whole flow is `app/api/menus/route.ts` → `lib/menu-store.ts` →
+three SQL functions in `supabase/schema.sql`. There is **no login**. Publishing
+returns two links:
+
+| link | what it's for |
+| --- | --- |
+| `/menu/<slug>` | the public menu — what the QR on the table encodes |
+| `/menu/<slug>/edit#<key>` | the editor. The key sits in the **fragment**, so it never reaches a server, an access log, a referrer or a CDN |
+
+The key is generated in the browser-safe `lib/menu.ts` (24 random bytes), and
+only its SHA-256 is stored — the database compares hashes, so a dump of the
+`menus` table hands out no editing rights, and there is nothing to reset. The
+route computes the hash; the client sends the key as an `x-menu-key` header.
+Losing the link means losing the editor, which the UI says before you can close
+the page.
+
+Why the database does so little: RLS is on, `anon` gets **insert and nothing
+else**, and reads/writes go through `menu_public()`, `menu_read()` and
+`menu_save()`, all `security definer`. So drafts can't be listed, an unpublished
+menu is invisible to the public while its owner can still open it, and prices
+change only through a request that presents the right key.
+
+Limits, all enforced server-side: 120 items, 64 KB bodies, **5 publishes and 20
+saves per 10 minutes per IP** (Redis-backed when Upstash is configured), and the
+same `robots: { index: false }` on every menu until there's a moderation step.
+
+```bash
+# publish (no auth today — publishing is rate-limited, not gated)
+curl -s -X POST localhost:3000/api/menus -H 'Content-Type: application/json' \
+  -d '{"cafeName":"Chai & Chapter","items":[{"category":"Coffee","name":"Masala Chai","price":"₹80"}]}'
+# → { ok, slug, url, editUrl, key }   ← the key is returned once
+
+# read / save with that key
+curl -s localhost:3000/api/menus/chai-chapter -H "x-menu-key: $KEY"
+curl -s -X PATCH localhost:3000/api/menus/chai-chapter -H "x-menu-key: $KEY" \
+  -H 'Content-Type: application/json' -d '{"cafeName":"Chai & Chapter","items":[…] }'
+```
+
+To take a menu down without deleting it:
+
+```sql
+update public.menus set published = false where slug = 'chai-and-chapter';
+```
+
+**Known limitation, stated plainly:** publishing is open to anyone who finds the
+page, because there is no billing or accounts yet. It is rate-limited, the pages
+are `noindex`, and a menu can be unpublished with one SQL statement. If this
+becomes the paid product the plan describes, the gate goes at the top of
+`POST /api/menus` — the rest of the path doesn't change.
 
 ### WhatsApp ordering
 
@@ -408,9 +491,28 @@ photo can't hijack the prompt.
 ### `POST /api/leads`
 
 Accepts the contact form payload, validates it, rejects honeypot hits and stores
-the lead when Supabase is configured. Rate limit: **6 / 10 min per IP**.
-Always returns `200 { ok: true, stored }` for a valid submission so the UI can
-offer the WhatsApp handoff.
+the lead when Supabase is configured. `whatsapp` is optional — the form has no
+phone field (the number arrives with the chat), and an enforced `NOT NULL` only
+ever turned a usable enquiry into a rejected one. Rate limit: **6 / 10 min per
+IP**, shared across instances when Upstash is configured. Always returns
+`200 { ok: true, stored }` for a valid submission so the UI can offer the
+WhatsApp handoff.
+
+### `POST /api/menus`
+
+Publishes a menu and returns `{ ok, slug, url, editUrl, key }` — `201`, and the
+key never comes back. `503 PUBLISHING_DISABLED` when Supabase isn't configured
+(the studio shows the hint verbatim), `400` with `field` for a menu with no
+usable items, `409 SLUG_EXHAUSTED` after five name collisions, `429` past five
+publishes in ten minutes.
+
+### `GET` / `PATCH /api/menus/[slug]`
+
+Both need `x-menu-key`. `GET` returns the full document including unpublished
+menus; `PATCH` saves `{ cafeName, tagline, whatsapp, items, published }` and
+returns `{ ok, updatedAt }`. `401 BAD_KEY` for a missing or malformed key, `403
+FORBIDDEN` for the wrong one, `503 STORE_UNAVAILABLE` when the database is down —
+never a 500, and never a partial write. Every response is `no-store`.
 
 ---
 
@@ -477,8 +579,13 @@ app/
   api/generate/route.ts    # server-only Gemini endpoint: transport, ladder, errors
   api/generate/prompts.ts  # every prompt, schema and normaliser (captions/reviews/posts)
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
+  api/menus/route.ts       # publish a menu → public URL + one-time edit link
+  api/menus/[slug]/route.ts# keyed read + save for one menu
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
+  menu/demo/page.tsx       # the page the demo QR points at (server component)
+  menu/[slug]/page.tsx     # a café's live menu — what its QR encodes
+  menu/[slug]/edit/page.tsx# owner editor shell (key lives in the fragment)
   privacy/, terms/         # legal pages
   opengraph-image.tsx      # generated social card
   robots.ts, sitemap.ts, manifest.ts
@@ -489,6 +596,9 @@ components/
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
   DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
+  menu/MenuCard.tsx        # menu layout, shared by studio, demo and live menus
+  menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
+  menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
@@ -505,11 +615,13 @@ lib/
   analytics.ts             # typed event catalogue → PostHog
   types.ts                 # shared request/response types, tones, languages
   leads.ts                 # lead validation shared by client + server
+  menu.ts                  # menu contract, slugs, capability keys (shared)
+  menu-store.ts            # Supabase RPC reads/writes — server only
   rate-limit.ts            # hashed-IP limiter used by both API routes
   studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy
   smooth-scroll.ts         # the one Lenis instance (null when not in use)
-supabase/schema.sql        # leads table + insert-only RLS
+supabase/schema.sql        # leads + menus tables, RLS, and the menu functions
 ```
 
 ---
@@ -620,8 +732,10 @@ only file that imports framer-motion apart from `MotionRoot` and the copy button
 ## Deploy to Vercel
 
 1. Push the repo to GitHub and import it at [vercel.com/new](https://vercel.com/new).
-2. Add `GEMINI_API_KEY`, `NEXT_PUBLIC_SITE_URL` (and the Supabase pair if you're
-   using lead storage).
+2. Add `GEMINI_API_KEY` and `NEXT_PUBLIC_SITE_URL`. Strongly recommended:
+   `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (shared rate limits) and
+   `SUPABASE_URL` + `SUPABASE_ANON_KEY` (lead storage). Without the last pair the
+   quote form still works, it just doesn't keep a record.
 3. Deploy. Environment changes only apply to **new** deployments — redeploy
    after adding or editing variables.
 

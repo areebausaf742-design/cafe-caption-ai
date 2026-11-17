@@ -17,7 +17,12 @@ export interface LeadInput {
   name: string;
   cafeName: string;
   city: string;
-  whatsapp: string;
+  /**
+   * Optional: the quick-quote form has no phone field (the enquiry arrives as a
+   * WhatsApp chat, so the number comes with it). Kept in the contract for API
+   * clients that do have one.
+   */
+  whatsapp?: string;
   email?: string;
   interest: Interest;
   message?: string;
@@ -29,7 +34,7 @@ export interface LeadDraft {
   name: string;
   cafe_name: string;
   city: string;
-  whatsapp: string;
+  whatsapp: string | null;
   email: string | null;
   interest: string;
   message: string | null;
@@ -86,11 +91,13 @@ export function validateLead(input: unknown): LeadValidation {
     return { ok: false, error: "Please add your city.", field: "city" };
   }
 
-  const whatsapp = normalizePhone(text(raw.whatsapp));
-  if (whatsapp.length < 8) {
+  // Optional — but if one is supplied, it has to be usable.
+  const whatsappRaw = text(raw.whatsapp);
+  const whatsapp = normalizePhone(whatsappRaw);
+  if (whatsappRaw.length > 0 && whatsapp.length < 8) {
     return {
       ok: false,
-      error: "Please add a WhatsApp number we can reach you on.",
+      error: "That WhatsApp number doesn't look right.",
       field: "whatsapp",
     };
   }
@@ -112,7 +119,7 @@ export function validateLead(input: unknown): LeadValidation {
       name,
       cafe_name: cafeName,
       city,
-      whatsapp,
+      whatsapp: whatsapp || null,
       email: email || null,
       interest,
       message: message || null,

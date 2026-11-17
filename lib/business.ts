@@ -54,11 +54,22 @@ export const BOOKING_NOTE = "20 minutes · no slides, no pressure";
 /**
  * Where the generated QR code points.
  *
- * ✏️  DEMO FOR NOW — this is the placeholder the digital-menu tab prints into
- * its QR code. A real order puts the café's own live menu URL here (that is
- * part of the ₹10,000 Café Launch Kit), so keep it as one constant.
+ * Built from a path plus the site's own public origin instead of a hardcoded
+ * domain, so the QR resolves on whichever host is actually serving the app.
+ * (`NEXT_PUBLIC_SITE_URL` is inlined at build time on both server and client,
+ * so the server HTML and the hydrated QR never disagree.)
+ *
+ * `app/menu/demo/page.tsx` is a real page: scanning the demo QR now lands on a
+ * working menu instead of a 404. A real order puts the café's own live menu URL
+ * here instead — that is part of the ₹10,000 Café Launch Kit — so keep it as one
+ * constant.
  */
-export const MENU_DEMO_URL = "https://cafecaption.tech/menu/demo";
+export const MENU_DEMO_PATH = "/menu/demo";
+
+const PUBLIC_SITE_ORIGIN =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "http://localhost:3000";
+
+export const MENU_DEMO_URL = `${PUBLIC_SITE_ORIGIN}${MENU_DEMO_PATH}`;
 
 /** Build a WhatsApp deep link with a pre-filled message. */
 export function whatsappUrl(message: string): string {

@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/privacy" },
 };
 
-const LAST_UPDATED = "14 November 2026";
+const LAST_UPDATED = "17 November 2026";
 
 export default function PrivacyPage() {
   return (
@@ -42,9 +42,11 @@ export default function PrivacyPage() {
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
             <li>
               <strong>Enquiry details</strong> — the name, café name, city, what
-              you need and any notes you type into the quote form. The site does
-              not send or store these: the form opens WhatsApp with them filled
-              in, and you choose whether to send the message.
+              you need and any notes you type into the quote form. Submitting
+              the form does two things: it keeps a copy of those answers in our
+              own database (Supabase), and it opens WhatsApp with them filled in.
+              The copy exists so an enquiry is not lost when the tab is blocked
+              — it is used only to reply to you.
             </li>
             <li>
               <strong>Photo descriptions</strong> — the text you type into the
@@ -52,9 +54,17 @@ export default function PrivacyPage() {
               captions and is not saved by us.
             </li>
             <li>
+              <strong>Published menus</strong> — if you publish a menu, the café
+              name, the line under it, the items and prices, and the WhatsApp
+              number you choose to show are stored in our database and shown on a
+              public page. Editing is protected by a key that is created once and
+              stored only as a hash, so we can&rsquo;t recover it for you. To take
+              a menu down, use the contact details below and it will be removed.
+            </li>
+            <li>
               <strong>Technical basics</strong> — anonymised, hashed request
-              data used to keep the caption studio from being abused. We do not
-              keep raw IP addresses.
+              counters used to keep the caption studio from being abused. We do
+              not keep raw IP addresses.
             </li>
           </ul>
         </section>
@@ -75,10 +85,12 @@ export default function PrivacyPage() {
             Who processes it
           </h2>
           <p className="mt-1.5">
-            The site is hosted on Vercel and captions are generated using
-            Google&apos;s Gemini API. Product analytics run on PostHog. These
-            providers process data on our behalf. No other third party receives
-            your details.
+            The site is hosted on Vercel, enquiries are stored in Supabase, and
+            captions are generated using Google&apos;s Gemini API. Abuse
+            protection keeps hashed counters in Upstash Redis, and published
+            menus live in Supabase too. Product analytics
+            run on PostHog. These providers process data on our behalf. No other
+            third party receives your details.
           </p>
         </section>
 
@@ -87,9 +99,11 @@ export default function PrivacyPage() {
             Analytics
           </h2>
           <p className="mt-1.5">
-            We use PostHog to count page views and four simple product events:
-            captions generated, something copied, quote form submitted, and a
-            button clicked (with the button&apos;s location and label). These
+            We use PostHog to count page views and a handful of product events:
+            a caption, menu or Google reply generated, a photo uploaded, a QR
+            downloaded, something copied, a quote form submitted, a menu
+            published, and a button clicked (with the button&apos;s location and
+            label). These
             events never include names, phone numbers, email addresses or the
             text you type. PostHog runs in memory-only mode here, so no cookies
             or local storage are used, and nothing is kept after you close the
