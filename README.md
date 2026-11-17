@@ -141,7 +141,9 @@ SUPABASE_ANON_KEY=<anon or publishable key>
 ```
 
 The same two variables also switch on **hosted menus** (`/menu/[slug]`), which
-need the `menus` half of the same schema file. Without them the form still
+need the `menus` half of the same schema file. A published menu with a WhatsApp
+number gets cart ordering automatically — the number is stored dialled, with the
+country code, so the `wa.me` link actually opens. Without them the form still
 submits successfully and the visitor is shown a
 one-tap **“Send it on WhatsApp”** handoff instead of an error — the API returns
 `{ ok: true, stored: false }` and the server log says
@@ -448,6 +450,56 @@ are `noindex`, and a menu can be unpublished with one SQL statement. If this
 becomes the paid product the plan describes, the gate goes at the top of
 `POST /api/menus` — the rest of the path doesn't change.
 
+### WhatsApp cart ordering
+
+A published menu stops being a poster. Each row gets a **+**, a fixed bar keeps
+the running count and total, **Review order** opens a sheet in the page (no
+modal, no focus trap) and **Send order on WhatsApp** opens `wa.me` with the whole
+order typed out:
+
+```
+New order for Chai & Chapter
+2 × Masala Chai — ₹160
+1 × Cappuccino — ₹160
+1 × Thali — 2 × priced in store
+Total: confirmed at the counter (one price wasn't a single figure)
+Note: less sugar, extra hot
+Ordered from /menu/chai-and-chapter
+```
+
+Nothing here touches our servers: the cart lives in the component, the message
+is built in the browser, and the order arrives in the café's own WhatsApp. No
+account, no app, no commission, no payment — the customer pays at the counter,
+and the page says so rather than implying checkout.
+
+**The rule that shapes the code:** *never invent a total.* Prices on a digitised
+menu are strings a person typed. `parsePrice()` in `lib/order.ts` reads `₹80`,
+`80`, `₹1,200`, `Rs. 80`, `80/-` — and refuses `₹80 / ₹120`, `80 120`, `market
+price`. If **any** selected line can't be read as one fixed number, the order
+goes out without a total and says the café will confirm it, instead of quietly
+adding up the wrong thing.
+
+| guard | value |
+| --- | --- |
+| max per line | 20 |
+| max different lines per order | 25 (the bar says so when you hit it) |
+| instructions | 200 characters, control characters stripped |
+| ordering UI | only on a menu whose café set a WhatsApp number |
+| test coverage | `parsePrice`, totals, caps, phone normalisation and URL encoding are asserted in a 11-check Node script run against the compiled module |
+
+The number is normalised **on the way in**, at publish time: `9876543210` or
+`098765 43210` are stored as `919876543210`, because a `wa.me` link without a
+country code doesn't dial. A menu published before this would have carried ten
+digits and produced a dead link.
+
+Analytics record that an order was sent and how many items were in it — never
+the items, the note or the total. `/privacy` says this in the same words.
+
+> **Pricing note.** The business case for this is a hypothesis, not revenue: the
+> proposal is to include cart ordering in a ₹499–₹999/month plan and test whether
+> cafés pay for it. Nothing on the site claims otherwise, and publishing stays
+> free and ungated until there is a decision about billing.
+
 ### WhatsApp ordering
 
 Under a generated menu the owner can type the café's number and press **Generate
@@ -599,6 +651,7 @@ components/
   menu/MenuCard.tsx        # menu layout, shared by studio, demo and live menus
   menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
   menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
+  menu/MenuOrder.tsx       # the cart: steppers, order sheet, wa.me handoff
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
@@ -617,6 +670,7 @@ lib/
   leads.ts                 # lead validation shared by client + server
   menu.ts                  # menu contract, slugs, capability keys (shared)
   menu-store.ts            # Supabase RPC reads/writes — server only
+  order.ts                 # cart maths, price parsing, the WhatsApp message
   rate-limit.ts            # hashed-IP limiter used by both API routes
   studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy

@@ -590,7 +590,10 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
                           <strong className="font-semibold text-espresso-900">
                             your
                           </strong>{" "}
-                          menu.
+                          menu
+                          {orderDigits
+                            ? " — customers can build a cart and send the order to your WhatsApp."
+                            : "."}
                         </span>
                       </p>
 

@@ -69,6 +69,19 @@ export type AnalyticsEvent =
       name: "copy";
       props: { kind: "caption" | "hashtags" | "all" | "reply" | "post" | "post_cta" };
     }
+  | {
+      name: "order_send";
+      props: {
+        /** Distinct items in the cart. */
+        items: number;
+        /** Every unit, so quantity edits show up. */
+        units: number;
+        /** Whether a note went with the order. Never what the note said. */
+        has_note: boolean;
+        /** False when a price wasn't a single figure, so no total was shown. */
+        total_known: boolean;
+      };
+    }
   | { name: "lead_submit"; props: { interest: string } }
   | { name: "cta_click"; props: { location: string; label: string } };
 
