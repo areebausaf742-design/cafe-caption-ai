@@ -29,6 +29,7 @@ import {
   type Tone,
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { requestGeneration, retryAfterLabel, type StudioError } from "@/lib/studio-client";
 import CopyIconButton from "@/components/studio/CopyIconButton";
 import TrackedLink from "@/components/TrackedLink";
@@ -301,7 +302,7 @@ export default function LocalSeoStudio({
     if (active.status !== "success") return;
     if (typeof window === "undefined" || window.innerWidth >= 640) return;
     const id = window.setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (resultsRef.current) smoothScrollTo(resultsRef.current);
     }, 120);
     return () => window.clearTimeout(id);
   }, [active.status, tool]);

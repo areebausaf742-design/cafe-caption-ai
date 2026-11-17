@@ -485,6 +485,7 @@ app/
 components/
   motion/MotionRoot.tsx    # LazyMotion provider — animation features load async
   motion/Reveal.tsx        # staggered fade-up on scroll-into-view (framer-motion)
+  motion/SmoothScroll.tsx  # Lenis inertial wheel + eased in-page anchors
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
   DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
@@ -507,6 +508,7 @@ lib/
   rate-limit.ts            # hashed-IP limiter used by both API routes
   studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy
+  smooth-scroll.ts         # the one Lenis instance (null when not in use)
 supabase/schema.sql        # leads table + insert-only RLS
 ```
 
@@ -532,11 +534,39 @@ restyle means editing two files, not thirty components.
 - `.hairline` — 1px ring painted with a warm gradient (caramel at the top-left,
   fading to near-nothing) via a `mask-composite` pseudo-element. Used on cards,
   panels and the studio, in place of flat grey borders.
-- `.paper` — the studio surface: translucent cream + `backdrop-blur-xl` and a
-  three-layer diffused shadow (contact shadow + soft spread + amber bloom).
-- `.glow-warm` — the soft caramel pool behind the hero headline.
-- Header — frosted glass (`bg-cream-100/70 backdrop-blur-xl backdrop-saturate-150`)
-  closed with a gradient hairline.
+- `.paper` — the studio surface: 94% opaque cream plus a three-layer diffused
+  shadow (contact shadow + soft spread + amber bloom). Deliberately *not*
+  frosted: a backdrop-filter that large has to be re-blurred on every scroll
+  frame, which is a hidden per-frame cost on mid-range phones.
+- `.glow-warm` — the soft caramel pool behind the hero headline. A plain
+  radial-gradient, no `filter: blur()` — the gradient already fades to nothing,
+  and the filter only bought an offscreen buffer the compositor had to keep.
+- Body background — three warm gradients on a `position: fixed` layer
+  (`body::before`), not `background-attachment: fixed`: the old property forces
+  a full-viewport repaint on every scroll frame. `<html>` carries the cream so
+  the layer can sit above it and below the content.
+- Header — frosted glass (`bg-cream-100/80 backdrop-blur-lg backdrop-saturate-150`,
+  16px blur instead of 24px: cost scales with the square of the radius) closed
+  with a gradient hairline.
+
+**Smooth scrolling**
+
+- `components/motion/SmoothScroll.tsx` runs [Lenis](https://github.com/darkroomengineering/lenis)
+  over the real document scroll (`window.scrollTo`), so the wheel stops landing
+  in hard 100px steps. Nothing is translated behind the browser's back: sticky
+  positioning, the scrollbar, keyboard paging, text selection, hash links and
+  `scroll-margin-top` all behave exactly as before.
+- `syncTouch: false` — phones keep native, GPU-composited momentum. Synthesised
+  touch inertia is where most "smooth scroll" sites fall apart.
+- `allowNestedScroll: true` — an overflowing textarea (a long caption) keeps the
+  wheel until it hits its own end, then hands back to the page.
+- In-page anchors (`#packages`, `/#contact`) are eased instead of jumping, and
+  the sticky header offset comes from the existing `[id] { scroll-margin-top }`.
+- Lenis is a **dynamic import** (~5.4 kB gzip in its own chunk, absent from the
+  first load) and is never created at all under `prefers-reduced-motion: reduce`.
+  `html:not(.lenis)` keeps native smooth anchor scrolling as the fallback.
+- `lib/smooth-scroll.ts` holds the single instance, so any component can ask for
+  `smoothScrollTo(element)` without knowing whether smoothing is active.
 
 **Motion**
 
@@ -544,13 +574,20 @@ restyle means editing two files, not thirty components.
   wraps the app in `LazyMotion` with `features={() => import("framer-motion")}`,
   so only the ~18 kB `m` renderer is in the initial JS and the ~70 kB (gzip)
   animation feature bundle arrives in its own async chunk.
-- `Reveal` gives sections their staggered fade-up (`whileInView`, `once: true`).
+- `Reveal` gives sections their staggered fade-up (`whileInView`, `once: true`,
+  0.7s on an expo-out curve — a longer tail reads as weight).
   The hero is CSS-only on purpose: above-the-fold content should paint with the
   stylesheet, not wait for JavaScript.
 - Every interactive control carries a press state (`active:scale-[0.97]`, or
   `whileTap` for the copy buttons), `prefers-reduced-motion` is honoured in both
   CSS and the `Reveal`/`usePrefersReducedMotion` pair, and `<noscript>` keeps
   revealed sections visible if JavaScript never runs.
+- Taps get out of the browser's way: `-webkit-tap-highlight-color: transparent`
+  and `touch-action: manipulation` on links and buttons, so there is no grey
+  flash and no double-tap delay — the press state is the only feedback.
+- The studio's tab panels animate *to* a resting hidden state while they are
+  hidden, so revisiting a tab eases in from the same place the first visit did
+  rather than snapping (the panels stay mounted by design — see the perf notes).
 - Loading states are shimmering skeletons shaped like the real caption cards —
   header line, three body lines, five hashtag pills, two action circles.
 
@@ -561,13 +598,16 @@ restyle means editing two files, not thirty components.
 - Every tap target is at least 44×44 px: copy buttons (`h-11 w-11`), tone chips,
   language buttons, package CTAs, nav and footer links, inputs (`.input`).
 
-**Bundle budget** — `npm run build` after this overhaul:
+**Bundle budget** — `npm run build` after the scroll/motion pass:
 
 ```
 Route (app)                                 Size  First Load JS
-┌ ○ /                                    21.1 kB         140 kB
+┌ ○ /                                    26.6 kB         145 kB
 + First Load JS shared by all             103 kB
 ```
+
+Lenis lives in its own 18.7 kB chunk (5.4 kB gzip) and is only fetched once the
+page is interactive, so it is not part of that 145 kB.
 
 Baseline before the overhaul was 14.8 kB / 122 kB. The +18 kB is framer-motion's
 `m` renderer only; the feature bundle (200 kB raw / 70 kB gzip) is an async

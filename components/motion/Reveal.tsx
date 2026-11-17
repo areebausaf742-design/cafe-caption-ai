@@ -5,7 +5,10 @@ import * as m from "framer-motion/m";
 
 import { usePrefersReducedMotion } from "@/components/motion/usePrefersReducedMotion";
 
-const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+/* Expo-out: almost all of the travel happens in the first third, then it eases
+   to a stop. Reads as weight — the thing that separates a paid-looking reveal
+   from a CSS `ease-in-out` one. */
+const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
 type RevealTag = "div" | "li" | "section" | "figure";
 
@@ -42,7 +45,7 @@ export default function Reveal({
     whileInView: { opacity: 1, y: 0 },
     viewport: { once: true, amount: 0.15, margin: "0px 0px -8% 0px" },
     transition: {
-      duration: reduced ? 0 : 0.6,
+      duration: reduced ? 0 : 0.7,
       delay: reduced ? 0 : delay / 1000,
       ease: EASE,
     },
