@@ -50,6 +50,7 @@ const WHAT_YOU_GET = [
   "A photo of your printed menu, read into clean categories, items and prices.",
   "Your own link — not this demo one — that you can print on every table.",
   "Prices you can change in ten seconds, without reprinting the tents.",
+  "A cart on the menu itself: customers pick quantities and send the order straight to your WhatsApp.",
 ];
 
 export default function MenuDemoPage() {

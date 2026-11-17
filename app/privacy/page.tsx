@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/privacy" },
 };
 
-const LAST_UPDATED = "17 November 2026";
+const LAST_UPDATED = "18 November 2026";
 
 export default function PrivacyPage() {
   return (
@@ -60,6 +60,13 @@ export default function PrivacyPage() {
               public page. Editing is protected by a key that is created once and
               stored only as a hash, so we can&rsquo;t recover it for you. To take
               a menu down, use the contact details below and it will be removed.
+            </li>
+            <li>
+              <strong>Menu orders</strong> — when someone orders from a menu,
+              the cart is put together in their own browser and handed to
+              WhatsApp. It never passes through this site&rsquo;s servers, so we
+              never see what was ordered or the note that went with it. We record
+              only that an order was sent, and how many items were in it.
             </li>
             <li>
               <strong>Technical basics</strong> — anonymised, hashed request

@@ -98,7 +98,9 @@ export function validateMenu(input: unknown): MenuValidation {
     };
   }
 
-  const whatsapp = text(raw.whatsapp, 15).replace(/[^\d]/g, "");
+  // Stored pre-dialled: an owner typing the number off a visiting card gets a
+  // number the order button can actually reach, not ten digits wa.me rejects.
+  const whatsapp = dialableWhatsapp(text(raw.whatsapp, 20));
 
   return {
     ok: true,
@@ -154,6 +156,20 @@ export function withSuffix(slug: string, attempt: number): string {
   const suffix = attempt === 0 ? "" : `-${attempt + 1}`;
   const trimmed = slug.slice(0, 40 - suffix.length).replace(/-+$/g, "");
   return `${trimmed}${suffix}`;
+}
+
+/**
+ * Digits a `wa.me` link will actually dial.
+ *
+ * Ten digits starting 6–9 are an Indian mobile, so they get the country code; a
+ * leading zero is dropped for the same reason. Anything already carrying a
+ * country code is left alone.
+ */
+export function dialableWhatsapp(raw: string): string {
+  const digits = String(raw ?? "").replace(/[^\d]/g, "");
+  if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`;
+  if (digits.length === 11 && digits.startsWith("0")) return `91${digits.slice(1)}`;
+  return digits;
 }
 
 export function menuPath(slug: string): string {

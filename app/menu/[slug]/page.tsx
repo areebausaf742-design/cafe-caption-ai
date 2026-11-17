@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowUpRight, Clock, MessageCircle } from "lucide-react";
+import { ArrowUpRight, Clock } from "lucide-react";
 
 import MenuCard from "@/components/menu/MenuCard";
+import MenuOrder from "@/components/menu/MenuOrder";
 import { SLUG_RE, toDigitalMenu, type MenuDoc } from "@/lib/menu";
 import { menuStoreConfigured, readPublicMenu } from "@/lib/menu-store";
 
@@ -44,11 +45,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     // until someone looks at it. Flipping this is one line when it matters.
     robots: { index: false, follow: true },
   };
-}
-
-function orderLink(whatsapp: string, cafeName: string): string {
-  const message = `Hi ${cafeName}, I'd like to order from your menu.`;
-  return `https://wa.me/${whatsapp}?text=${encodeURIComponent(message)}`;
 }
 
 export default async function MenuPage({ params }: Props) {
@@ -107,8 +103,17 @@ export default async function MenuPage({ params }: Props) {
       })
     : null;
 
+  // A café with an order number gets the cart; one without gets the menu, which
+  // is exactly what they asked for by leaving it empty.
+  const orderable = Boolean(menu.whatsapp);
+
   return (
-    <main className="mx-auto w-full max-w-xl px-4 pt-8 pb-16 sm:px-6 sm:pt-12">
+    <main
+      className={`mx-auto w-full max-w-xl px-4 pt-8 sm:px-6 sm:pt-12 ${
+        // Room for the fixed cart bar, which only appears once something is in it.
+        orderable ? "pb-32 sm:pb-28" : "pb-16"
+      }`}
+    >
       {menu.tagline && (
         <p className="text-center text-[11px] font-medium uppercase tracking-[0.16em] text-caramel-600">
           {menu.tagline}
@@ -116,24 +121,30 @@ export default async function MenuPage({ params }: Props) {
       )}
 
       <div className="mt-3">
-        <MenuCard
-          menu={menuData}
-          cafeName={menu.cafeName}
-          isSample={false}
-          updated={updated}
-        />
+        {menu.whatsapp ? (
+          <MenuOrder
+            slug={slug}
+            cafeName={menu.cafeName}
+            menu={menuData}
+            items={menu.items}
+            whatsapp={menu.whatsapp}
+            updated={updated}
+          />
+        ) : (
+          <MenuCard
+            menu={menuData}
+            cafeName={menu.cafeName}
+            isSample={false}
+            updated={updated}
+          />
+        )}
       </div>
 
-      {menu.whatsapp && (
-        <a
-          href={orderLink(menu.whatsapp, menu.cafeName)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-primary tap mt-4 inline-flex w-full items-center justify-center gap-2"
-        >
-          <MessageCircle className="h-4 w-4" aria-hidden />
-          Order on WhatsApp
-        </a>
+      {orderable && (
+        <p className="mt-8 text-center text-[10.5px] leading-[1.6] text-espresso-400">
+          Tap the + beside anything you want, then send the order to the café on
+          WhatsApp. No app, no account, no commission.
+        </p>
       )}
 
       <div className="mt-6 flex flex-col items-center gap-1.5 text-center">
