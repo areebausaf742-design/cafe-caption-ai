@@ -16,10 +16,13 @@ export default function MenuCard({
   menu,
   cafeName,
   isSample,
+  updated,
 }: {
   menu: MenuData;
   cafeName: string;
   isSample: boolean;
+  /** "Prices last updated 14 Nov" — only the live menu has one. */
+  updated?: string | null;
 }) {
   const grouped = menu.categories.map((category) => ({
     category,
@@ -66,10 +69,16 @@ export default function MenuCard({
         <span className="text-[9px] uppercase tracking-[0.16em] text-espresso-400">
           {isSample ? "Digitised in seconds" : "Digitised with CafeCaption"}
         </span>
-        <span className="flex items-center gap-1 text-[9px] font-semibold text-espresso-500">
-          Scan the QR
-          <QrCode className="h-2.5 w-2.5" aria-hidden />
-        </span>
+        {updated ? (
+          <span className="text-[9px] font-medium text-espresso-500">
+            Updated {updated}
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-[9px] font-semibold text-espresso-500">
+            Scan the QR
+            <QrCode className="h-2.5 w-2.5" aria-hidden />
+          </span>
+        )}
       </footer>
     </article>
   );

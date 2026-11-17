@@ -6,7 +6,9 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
+  Copy,
   Download,
+  ExternalLink,
   Loader2,
   MessageCircle,
   QrCode,
@@ -69,6 +71,19 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   const [orderNumber, setOrderNumber] = useState("");
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderRequested, setOrderRequested] = useState(false);
+
+  // Publishing: once a menu is live, the QR encodes its own URL instead of the
+  // demo one. Kept here rather than in a child because the export canvas needs
+  // the same value.
+  const [published, setPublished] = useState<{
+    slug: string;
+    url: string;
+    editUrl: string;
+  } | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [editCopied, setEditCopied] = useState(false);
+  const editCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const reduced = usePrefersReducedMotion();
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -199,6 +214,10 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     setMenu(null);
     setError(null);
     setStatus("idle");
+    // A new menu is a new menu: the old URL stays live, but this session goes
+    // back to the demo code rather than quietly reusing it.
+    setPublished(null);
+    setPublishError(null);
   };
 
   /* --------------------------- WhatsApp ordering -------------------------- */
@@ -223,6 +242,68 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     setOrderError(null);
   };
 
+  /* ------------------------------ Publishing ------------------------------ */
+
+  const publish = useCallback(async () => {
+    if (!menu || publishing) return;
+
+    if (cafeName.trim().length < 2) {
+      setPublishError("Add your café's name in the box above, then publish.");
+      return;
+    }
+
+    setPublishing(true);
+    setPublishError(null);
+
+    try {
+      const response = await fetch("/api/menus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cafeName: cafeName.trim(),
+          whatsapp: orderDigits,
+          items: menu.items,
+        }),
+      });
+
+      const body = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setPublishError(
+          body?.error ??
+            "That didn't publish. Your menu is still here — try again in a moment.",
+        );
+        return;
+      }
+
+      setPublished({ slug: body.slug, url: body.url, editUrl: body.editUrl });
+      track({
+        name: "menu_publish",
+        props: {
+          items: menu.items.length,
+          categories: menu.categoryCount,
+          attempt: published ? "again" : "first",
+        },
+      });
+    } catch {
+      setPublishError("Couldn't reach the server. Your menu is still here.");
+    } finally {
+      setPublishing(false);
+    }
+  }, [menu, publishing, cafeName, orderDigits, published]);
+
+  const copyEditLink = useCallback(async () => {
+    if (!published) return;
+    try {
+      await navigator.clipboard.writeText(published.editUrl);
+      setEditCopied(true);
+      if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
+      editCopyTimer.current = setTimeout(() => setEditCopied(false), 2200);
+    } catch {
+      // Clipboard permission can be refused; the field stays selectable.
+    }
+  }, [published]);
+
   /* ------------------------------ QR code ------------------------------- */
 
   /**
@@ -245,7 +326,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
         .replace(/^-+|-+$/g, "")
         .slice(0, 40) || "cafe";
 
-    const fileName = `${slug}-menu-qr.png`;
+    const fileName = `${published?.slug ?? slug}-menu-qr.png`;
 
     const save = (href: string) => {
       const link = document.createElement("a");
@@ -257,7 +338,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     };
 
     const finish = () => {
-      track({ name: "qr_download", props: { target: "demo" } });
+      track({ name: "qr_download", props: { target: published ? "own" : "demo" } });
       setDownloaded(true);
       if (downloadTimer.current) clearTimeout(downloadTimer.current);
       downloadTimer.current = setTimeout(() => setDownloaded(false), 2400);
@@ -282,7 +363,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
 
     save(canvas.toDataURL("image/png"));
     finish();
-  }, [cafeName]);
+  }, [cafeName, published]);
 
   // On phones the menu lands below the fold — bring it into view.
   useEffect(() => {
@@ -297,6 +378,8 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   const shown = menu ?? SAMPLE_MENU;
   const isSample = !menu;
   const itemCount = shown.items.length;
+  // The QR encodes the published menu when there is one, the demo otherwise.
+  const qrUrl = published?.url ?? MENU_DEMO_URL;
 
   /* -------------------------------- view -------------------------------- */
 
@@ -461,7 +544,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
                   <div className="mt-3 flex justify-center">
                     <div className="rounded-lg bg-cream-50 p-2 shadow-[0_10px_24px_-18px_rgba(36,24,18,0.6)]">
                       <QRCodeSVG
-                        value={MENU_DEMO_URL}
+                        value={qrUrl}
                         size={148}
                         level="M"
                         marginSize={2}
@@ -474,7 +557,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
                   </div>
 
                   <p className="mt-2.5 break-all text-[9.5px] leading-tight text-espresso-500/80">
-                    {MENU_DEMO_URL.replace(/^https?:\/\//, "")}
+                    {qrUrl.replace(/^https?:\/\//, "")}
                   </p>
 
                   <button
@@ -495,9 +578,87 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
                     )}
                   </button>
 
-                  <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-500/70">
-                    Demo link for now — your own menu URL goes live with the kit.
-                  </p>
+                  {published ? (
+                    <div className="mt-3 space-y-2 text-left">
+                      <p className="flex items-start gap-1.5 rounded-lg bg-sage-100/80 px-2.5 py-2 text-[10px] leading-[1.5] text-espresso-700">
+                        <Check
+                          className="mt-[1px] h-3 w-3 shrink-0 text-sage-500"
+                          aria-hidden
+                        />
+                        <span>
+                          Live. This code now opens{" "}
+                          <strong className="font-semibold text-espresso-900">
+                            your
+                          </strong>{" "}
+                          menu.
+                        </span>
+                      </p>
+
+                      <a
+                        href={published.editUrl}
+                        className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-espresso-800 underline decoration-espresso-900/25 underline-offset-2 hover:decoration-espresso-900/60"
+                      >
+                        Edit this menu
+                        <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={copyEditLink}
+                        className="flex w-full items-center justify-center gap-1 rounded-lg border border-espresso-900/[0.12] bg-white/70 px-2 py-1.5 text-[10px] font-medium text-espresso-600 hover:border-espresso-900/25 hover:text-espresso-900"
+                      >
+                        {editCopied ? (
+                          <>
+                            <Check className="h-2.5 w-2.5 text-sage-500" />
+                            Editor link copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-2.5 w-2.5" />
+                            Copy editor link
+                          </>
+                        )}
+                      </button>
+
+                      <p className="text-[9px] leading-[1.5] text-espresso-500/80">
+                        The editor link is the only way back in — bookmark it. No
+                        account, no password reset.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={publish}
+                        disabled={publishing || !menu}
+                        className="tap mt-2.5 inline-flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-lg bg-espresso-900 px-3 text-[11.5px] font-semibold text-cream-50 hover:bg-espresso-800 disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
+                      >
+                        {publishing ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Publishing…
+                          </>
+                        ) : (
+                          <>
+                            <ArrowUpRight className="h-3.5 w-3.5" />
+                            Publish this menu
+                          </>
+                        )}
+                      </button>
+
+                      {publishError ? (
+                        <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-800">
+                          {publishError}
+                        </p>
+                      ) : (
+                        <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-500/70">
+                          {menu
+                            ? "Puts it live on its own link — no account needed."
+                            : "Read a menu photo first, then publish it."}
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 <p className="flex items-start gap-1.5 rounded-xl bg-sage-100/70 px-3 py-2.5 text-[10.5px] leading-[1.55] text-espresso-700">
@@ -543,7 +704,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       <div aria-hidden className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
         <QRCodeCanvas
           ref={qrCanvasRef}
-          value={MENU_DEMO_URL}
+          value={qrUrl}
           size={QR_PNG_SIZE}
           level="M"
           // 4 modules is the quiet zone the QR spec asks for — print shops

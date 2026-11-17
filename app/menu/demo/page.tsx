@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, Camera, Pencil, QrCode } from "lucide-react";
 
-import DemoQr from "@/components/menu/DemoQr";
+import MenuQr from "@/components/menu/MenuQr";
 import MenuCard from "@/components/menu/MenuCard";
 import { BOOKING_URL, MENU_DEMO_URL } from "@/lib/business";
 import type { DigitalMenu } from "@/lib/types";
@@ -77,7 +77,7 @@ export default function MenuDemoPage() {
               Scan for the menu
             </p>
             <div className="mt-3 flex justify-center">
-              <DemoQr url={MENU_DEMO_URL} />
+              <MenuQr url={MENU_DEMO_URL} />
             </div>
             <p className="mt-3 break-all text-[9.5px] font-medium tracking-[0.01em] text-espresso-400">
               {MENU_DEMO_URL.replace(/^https?:\/\//, "")}

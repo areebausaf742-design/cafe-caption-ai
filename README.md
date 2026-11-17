@@ -140,16 +140,14 @@ SUPABASE_ANON_KEY=<anon or publishable key>
 # SUPABASE_LEADS_TABLE=leads
 ```
 
-Without these the form still submits successfully and the visitor is shown a
+The same two variables also switch on **hosted menus** (`/menu/[slug]`), which
+need the `menus` half of the same schema file. Without them the form still
+submits successfully and the visitor is shown a
 one-tap **“Send it on WhatsApp”** handoff instead of an error — the API returns
 `{ ok: true, stored: false }` and the server log says
 `[leads] Supabase is not configured`. So the wiring is live today and starts
 keeping records the moment the two variables exist; nothing in the client has to
 change.
-
-The form does not call this endpoint today — it hands straight to WhatsApp.
-Wire it back by posting the same fields from `components/LeadForm.tsx` if you
-want rows in a table.
 
 Enquiries store: name, café, city, WhatsApp, email, interest, message, source and
 referring page. Read them in the Supabase table editor:
@@ -388,8 +386,67 @@ page for this step:
   `MENU_DEMO_PATH` + `NEXT_PUBLIC_SITE_URL` rather than a hardcoded domain, so
   the code resolves on whichever host is serving the app. It points at
   **`/menu/demo`**, which is a real page (`app/menu/demo/page.tsx`) — scanning
-  the demo QR lands on a working sample menu instead of the 404 it used to. A
-  real order swaps that one constant for the café's own live menu URL
+  the demo QR lands on a working sample menu instead of the 404 it used to.
+- Once an owner presses **Publish this menu**, the same QR switches to their own
+  live URL — the code, the URL printed under it and the downloaded PNG all read
+  one derived value (`published?.url ?? MENU_DEMO_URL`), so they can never
+  disagree
+
+### Hosted menus (`/menu/[slug]`)
+
+Photographing a printed card produced a preview and a QR that pointed at a demo.
+Now the preview can go live: **Publish this menu** creates a real page at
+`/menu/<slug>`, and the QR, the printed link and the downloaded PNG all follow it.
+
+The whole flow is `app/api/menus/route.ts` → `lib/menu-store.ts` →
+three SQL functions in `supabase/schema.sql`. There is **no login**. Publishing
+returns two links:
+
+| link | what it's for |
+| --- | --- |
+| `/menu/<slug>` | the public menu — what the QR on the table encodes |
+| `/menu/<slug>/edit#<key>` | the editor. The key sits in the **fragment**, so it never reaches a server, an access log, a referrer or a CDN |
+
+The key is generated in the browser-safe `lib/menu.ts` (24 random bytes), and
+only its SHA-256 is stored — the database compares hashes, so a dump of the
+`menus` table hands out no editing rights, and there is nothing to reset. The
+route computes the hash; the client sends the key as an `x-menu-key` header.
+Losing the link means losing the editor, which the UI says before you can close
+the page.
+
+Why the database does so little: RLS is on, `anon` gets **insert and nothing
+else**, and reads/writes go through `menu_public()`, `menu_read()` and
+`menu_save()`, all `security definer`. So drafts can't be listed, an unpublished
+menu is invisible to the public while its owner can still open it, and prices
+change only through a request that presents the right key.
+
+Limits, all enforced server-side: 120 items, 64 KB bodies, **5 publishes and 20
+saves per 10 minutes per IP** (Redis-backed when Upstash is configured), and the
+same `robots: { index: false }` on every menu until there's a moderation step.
+
+```bash
+# publish (no auth today — publishing is rate-limited, not gated)
+curl -s -X POST localhost:3000/api/menus -H 'Content-Type: application/json' \
+  -d '{"cafeName":"Chai & Chapter","items":[{"category":"Coffee","name":"Masala Chai","price":"₹80"}]}'
+# → { ok, slug, url, editUrl, key }   ← the key is returned once
+
+# read / save with that key
+curl -s localhost:3000/api/menus/chai-chapter -H "x-menu-key: $KEY"
+curl -s -X PATCH localhost:3000/api/menus/chai-chapter -H "x-menu-key: $KEY" \
+  -H 'Content-Type: application/json' -d '{"cafeName":"Chai & Chapter","items":[…] }'
+```
+
+To take a menu down without deleting it:
+
+```sql
+update public.menus set published = false where slug = 'chai-and-chapter';
+```
+
+**Known limitation, stated plainly:** publishing is open to anyone who finds the
+page, because there is no billing or accounts yet. It is rate-limited, the pages
+are `noindex`, and a menu can be unpublished with one SQL statement. If this
+becomes the paid product the plan describes, the gate goes at the top of
+`POST /api/menus` — the rest of the path doesn't change.
 
 ### WhatsApp ordering
 
@@ -440,6 +497,22 @@ ever turned a usable enquiry into a rejected one. Rate limit: **6 / 10 min per
 IP**, shared across instances when Upstash is configured. Always returns
 `200 { ok: true, stored }` for a valid submission so the UI can offer the
 WhatsApp handoff.
+
+### `POST /api/menus`
+
+Publishes a menu and returns `{ ok, slug, url, editUrl, key }` — `201`, and the
+key never comes back. `503 PUBLISHING_DISABLED` when Supabase isn't configured
+(the studio shows the hint verbatim), `400` with `field` for a menu with no
+usable items, `409 SLUG_EXHAUSTED` after five name collisions, `429` past five
+publishes in ten minutes.
+
+### `GET` / `PATCH /api/menus/[slug]`
+
+Both need `x-menu-key`. `GET` returns the full document including unpublished
+menus; `PATCH` saves `{ cafeName, tagline, whatsapp, items, published }` and
+returns `{ ok, updatedAt }`. `401 BAD_KEY` for a missing or malformed key, `403
+FORBIDDEN` for the wrong one, `503 STORE_UNAVAILABLE` when the database is down —
+never a 500, and never a partial write. Every response is `no-store`.
 
 ---
 
@@ -506,9 +579,13 @@ app/
   api/generate/route.ts    # server-only Gemini endpoint: transport, ladder, errors
   api/generate/prompts.ts  # every prompt, schema and normaliser (captions/reviews/posts)
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
+  api/menus/route.ts       # publish a menu → public URL + one-time edit link
+  api/menus/[slug]/route.ts# keyed read + save for one menu
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
   menu/demo/page.tsx       # the page the demo QR points at (server component)
+  menu/[slug]/page.tsx     # a café's live menu — what its QR encodes
+  menu/[slug]/edit/page.tsx# owner editor shell (key lives in the fragment)
   privacy/, terms/         # legal pages
   opengraph-image.tsx      # generated social card
   robots.ts, sitemap.ts, manifest.ts
@@ -519,8 +596,9 @@ components/
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
   DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
-  menu/MenuCard.tsx        # menu layout, shared by the studio and /menu/demo
-  menu/DemoQr.tsx          # the QR island on the demo page
+  menu/MenuCard.tsx        # menu layout, shared by studio, demo and live menus
+  menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
+  menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
@@ -537,11 +615,13 @@ lib/
   analytics.ts             # typed event catalogue → PostHog
   types.ts                 # shared request/response types, tones, languages
   leads.ts                 # lead validation shared by client + server
+  menu.ts                  # menu contract, slugs, capability keys (shared)
+  menu-store.ts            # Supabase RPC reads/writes — server only
   rate-limit.ts            # hashed-IP limiter used by both API routes
   studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy
   smooth-scroll.ts         # the one Lenis instance (null when not in use)
-supabase/schema.sql        # leads table + insert-only RLS
+supabase/schema.sql        # leads + menus tables, RLS, and the menu functions
 ```
 
 ---

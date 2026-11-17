@@ -3,12 +3,13 @@
 import { QRCodeSVG } from "qrcode.react";
 
 /**
- * The QR the demo page shows for itself.
+ * A QR code for a menu URL — the demo page, a live menu, or the editor's
+ * "print this" card.
  *
  * `qrcode.react` renders with hooks, so this lives in a client component — the
- * page around it stays a server component and ships no JavaScript of its own.
+ * pages around it stay server components and ship no JavaScript of their own.
  */
-export default function DemoQr({
+export default function MenuQr({
   url,
   size = 168,
 }: {
@@ -24,7 +25,7 @@ export default function DemoQr({
         marginSize={2}
         bgColor="#FFFBF5"
         fgColor="#241812"
-        title="QR code linking to this demo menu"
+        title="QR code linking to this menu"
       />
     </div>
   );

@@ -51,8 +51,18 @@ export type AnalyticsEvent =
   | {
       name: "qr_download";
       props: {
-        /** `demo` until a café's own menu URL is wired up. */
-        target: "demo";
+        /** `own` once the QR encodes the café's published menu. */
+        target: "demo" | "own";
+      };
+    }
+  | {
+      name: "menu_publish";
+      props: {
+        /** Items that went live. No slug, no café name — nothing identifying. */
+        items: number;
+        categories: number;
+        /** `first` for the first publish in this session, `again` after that. */
+        attempt: "first" | "again";
       };
     }
   | {
