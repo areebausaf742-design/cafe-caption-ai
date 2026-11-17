@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -14,6 +21,7 @@ import {
   QrCode,
   RotateCcw,
   Sparkles,
+  Store,
 } from "lucide-react";
 import * as m from "framer-motion/m";
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
@@ -39,12 +47,17 @@ import { MENU_DEMO_URL } from "@/lib/business";
 import { MAX_ITEMS, toDigitalMenu } from "@/lib/menu";
 import {
   addItem,
+  cafeNameProblem,
   checkDraft,
   removeItem,
   renameSection,
   setItemField,
 } from "@/lib/menu-draft";
-import type { DigitalMenu as MenuData, MenuItem } from "@/lib/types";
+import {
+  MAX_CAFE_NAME_LENGTH,
+  type DigitalMenu as MenuData,
+  type MenuItem,
+} from "@/lib/types";
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -64,12 +77,30 @@ const SAMPLE_MENU: MenuData = {
 
 const QR_PNG_SIZE = 1024;
 
-export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
+/**
+ * The menu tab.
+ *
+ * `cafeName` is owned by `CaptionStudio` and shared with the other two tabs —
+ * this component never keeps a copy, so typing here changes the caption tab and
+ * the WhatsApp order line too. The name is required to publish, so the field
+ * lives here rather than only behind the "Café details" accordion.
+ */
+export default function DigitalMenuStudio({
+  cafeName,
+  onCafeName,
+}: {
+  cafeName: string;
+  onCafeName: (value: string) => void;
+}) {
   const [image, setImage] = useState<PreparedImage | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
 
   const [status, setStatus] = useState<Status>("idle");
+  // The error appears once the field has been visited or publishing has been
+  // blocked — not before a person has typed anything.
+  const [nameTouched, setNameTouched] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
   // The rows, not the card: categories and section counts are derived from them
   // (`toDigitalMenu`), so renaming a section can never leave the preview out of
   // step with what `POST /api/menus` receives.
@@ -309,8 +340,12 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       return;
     }
 
-    if (cafeName.trim().length < 2) {
-      setPublishError("Add your café's name in the box above, then publish.");
+    const nameIssue = cafeNameProblem(cafeName);
+    if (nameIssue) {
+      // The field is at the top of this tab with its own message; sending the
+      // person there is more useful than a line of red beside the button.
+      setNameTouched(true);
+      nameRef.current?.focus();
       return;
     }
 
@@ -438,6 +473,9 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     return () => window.clearTimeout(id);
   }, [status]);
 
+  const nameProblem = cafeNameProblem(cafeName);
+  const showNameError = Boolean(nameProblem) && nameTouched;
+
   const shown = menu ?? SAMPLE_MENU;
   const isSample = !menu;
   const itemCount = shown.items.length;
@@ -455,6 +493,22 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
 
   return (
     <div>
+      <CafeNameField
+        value={cafeName}
+        problem={nameProblem}
+        showError={showNameError}
+        inputRef={nameRef}
+        onChange={(value) => {
+          onCafeName(value.slice(0, MAX_CAFE_NAME_LENGTH));
+          setPublishError(null);
+        }}
+        onBlur={() => {
+          // Visiting the field with something invalid in it is what turns the
+          // message on; an untouched empty field stays quiet.
+          if (cafeName.trim().length > 0) setNameTouched(true);
+        }}
+      />
+
       <PhotoDropzone
         image={image}
         preparing={preparing}
@@ -839,6 +893,84 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
 
 /* The menu preview itself lives in `components/menu/MenuCard.tsx`, because the
    public demo page the QR code points at renders the same thing on the server. */
+
+/* -------------------------------------------------------------------------- */
+/*  Café name                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The café name field, in the open at the top of the menu tab.
+ *
+ * Split out of the studio so both states — the hint and the inline error — can
+ * be rendered on their own, and so the field can be focused by the publish
+ * guard. The value itself is a prop: `CaptionStudio` owns it.
+ */
+export function CafeNameField({
+  value,
+  problem,
+  showError,
+  inputRef,
+  onChange,
+  onBlur,
+}: {
+  value: string;
+  problem: string | null;
+  showError: boolean;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+}) {
+  return (
+    <div className="mb-3.5">
+      <label
+        htmlFor="menu-cafe-name"
+        className="mb-1.5 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-espresso-500"
+      >
+        <Store className="h-3 w-3" aria-hidden />
+        Café name
+      </label>
+      <input
+        id="menu-cafe-name"
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        maxLength={MAX_CAFE_NAME_LENGTH}
+        placeholder="The Daily Grind"
+        autoComplete="organization"
+        aria-invalid={showError || undefined}
+        aria-describedby={
+          showError ? "menu-cafe-name-error" : "menu-cafe-name-hint"
+        }
+        className={`input py-2 pr-3 text-base sm:text-[13.5px] ${
+          showError
+            ? "border-[#9C4527]/55 focus:border-[#9C4527] focus:ring-[#9C4527]/15"
+            : ""
+        }`}
+      />
+
+      {showError ? (
+        <p
+          id="menu-cafe-name-error"
+          role="alert"
+          className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-[1.55] text-[#9C4527]"
+        >
+          <AlertCircle className="mt-[1px] h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{problem}</span>
+        </p>
+      ) : (
+        <p
+          id="menu-cafe-name-hint"
+          className="mt-1.5 text-[10.5px] leading-[1.55] text-espresso-500"
+        >
+          Printed on the menu and sent with every WhatsApp order. The same name
+          the other tabs use.
+        </p>
+      )}
+    </div>
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /*  WhatsApp ordering                                                         */
