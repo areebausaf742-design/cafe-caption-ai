@@ -33,7 +33,6 @@ import {
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
 import PhotoDropzone from "@/components/PhotoDropzone";
-import LocalSeoStudio from "@/components/LocalSeoStudio";
 import dynamic from "next/dynamic";
 import StudioTabs, { type StudioTab } from "@/components/studio/StudioTabs";
 import CopyIconButton from "@/components/studio/CopyIconButton";
@@ -52,7 +51,16 @@ import { usePrefersReducedMotion } from "@/components/motion/usePrefersReducedMo
  */
 const DigitalMenuStudio = dynamic(() => import("@/components/DigitalMenu"), {
   ssr: false,
-  loading: () => <MenuTabSkeleton />,
+  loading: () => <TabSkeleton />,
+});
+
+/**
+ * Same treatment for the Google tab: ~40 KB of review/post UI that most
+ * visitors never open, so it loads with the tab rather than with the page.
+ */
+const LocalSeoStudio = dynamic(() => import("@/components/LocalSeoStudio"), {
+  ssr: false,
+  loading: () => <TabSkeleton />,
 });
 
 const TEXT_LOADING_STEPS = [
@@ -92,6 +100,31 @@ interface UiError {
 
 export default function CaptionStudio() {
   const [tab, setTab] = useState<StudioTab>("captions");
+
+  /**
+   * Panels mount on first visit and then stay mounted (hidden when inactive).
+   *
+   * Rendering only the active tab used to unmount the others, which threw away
+   * a pasted review, a generated reply, an uploaded menu photo and its QR — and
+   * left `aria-controls` pointing at an element that wasn't in the DOM. State
+   * lives in the panels, so they have to outlive a tab switch.
+   *
+   * The set is updated in the same commit as the tab itself, so the panel is
+   * there on the switch's first paint rather than a frame late.
+   */
+  const [visited, setVisited] = useState<Set<StudioTab>>(
+    () => new Set<StudioTab>(["captions"]),
+  );
+
+  const changeTab = useCallback((next: StudioTab) => {
+    setVisited((previous) => {
+      if (previous.has(next)) return previous;
+      const updated = new Set(previous);
+      updated.add(next);
+      return updated;
+    });
+    setTab(next);
+  }, []);
   const reduced = usePrefersReducedMotion();
 
   const [description, setDescription] = useState("");
@@ -238,18 +271,32 @@ export default function CaptionStudio() {
 
   /* ------------------------------- photo -------------------------------- */
 
+  // Two photos dropped in quick succession each decode on their own schedule,
+  // and a big one can finish last. Every upload takes a ticket; only the newest
+  // ticket is allowed to touch state.
+  const uploadSeq = useRef(0);
+
   const handlePhoto = useCallback(async (file: File) => {
+    const seq = ++uploadSeq.current;
+
     setImageError(null);
     setPreparingImage(true);
 
     try {
       const prepared = await prepareImage(file);
+      if (seq !== uploadSeq.current) {
+        releaseImage(prepared);
+        return;
+      }
       setImage((previous) => {
         releaseImage(previous);
         return prepared;
       });
       track({ name: "photo_upload", props: { outcome: "ready" } });
     } catch (error) {
+      // A rejection from a superseded upload would accuse the photo the user
+      // is actually looking at.
+      if (seq !== uploadSeq.current) return;
       setImageError(
         error instanceof ImagePrepError
           ? error.message
@@ -257,16 +304,19 @@ export default function CaptionStudio() {
       );
       track({ name: "photo_upload", props: { outcome: "rejected" } });
     } finally {
-      setPreparingImage(false);
+      if (seq === uploadSeq.current) setPreparingImage(false);
     }
   }, []);
 
   const removePhoto = useCallback(() => {
+    // Invalidate anything still decoding, so it can't re-attach itself.
+    uploadSeq.current += 1;
     setImage((previous) => {
       releaseImage(previous);
       return null;
     });
     setImageError(null);
+    setPreparingImage(false);
   }, []);
 
   // Revoke the last preview URL when the studio unmounts, so blobs don't leak.
@@ -381,14 +431,15 @@ export default function CaptionStudio() {
         <span className="tag hidden shrink-0 sm:inline-flex">Free · no account</span>
       </div>
 
-      <StudioTabs active={tab} onChange={setTab} />
+      <StudioTabs active={tab} onChange={changeTab} />
 
-      {tab === "captions" ? (
+      {visited.has("captions") && (
         <m.div
           key="captions"
           id="studio-panel-captions"
           role="tabpanel"
           aria-labelledby="studio-tab-captions"
+          hidden={tab !== "captions"}
           initial={reduced ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
@@ -884,12 +935,15 @@ export default function CaptionStudio() {
             )}
           </div>
         </m.div>
-      ) : tab === "seo" ? (
+      )}
+
+      {visited.has("seo") && (
         <m.div
           key="seo"
           id="studio-panel-seo"
           role="tabpanel"
           aria-labelledby="studio-tab-seo"
+          hidden={tab !== "seo"}
           initial={reduced ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
@@ -904,12 +958,15 @@ export default function CaptionStudio() {
             onLanguage={setLanguage}
           />
         </m.div>
-      ) : (
+      )}
+
+      {visited.has("menu") && (
         <m.div
           key="menu"
           id="studio-panel-menu"
           role="tabpanel"
           aria-labelledby="studio-tab-menu"
+          hidden={tab !== "menu"}
           initial={reduced ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
@@ -926,7 +983,7 @@ export default function CaptionStudio() {
 /*  Lazy-tab skeleton — same shape as the menu tab, so nothing jumps          */
 /* -------------------------------------------------------------------------- */
 
-function MenuTabSkeleton() {
+function TabSkeleton() {
   return (
     <div aria-hidden className="shimmer relative">
       <div className="hairline flex min-h-[116px] w-full flex-col items-center justify-center gap-2 rounded-xl bg-white/45">
