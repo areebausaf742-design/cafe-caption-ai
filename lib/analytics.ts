@@ -63,6 +63,8 @@ export type AnalyticsEvent =
         categories: number;
         /** `first` for the first publish in this session, `again` after that. */
         attempt: "first" | "again";
+        /** Whether Hindi + Hinglish went live with it. */
+        translated: boolean;
       };
     }
   | {
@@ -80,6 +82,13 @@ export type AnalyticsEvent =
         has_note: boolean;
         /** False when a price wasn't a single figure, so no total was shown. */
         total_known: boolean;
+      };
+    }
+  | {
+      name: "menu_language";
+      props: {
+        /** Which language a customer switched the menu to. Never what they read. */
+        language: "en" | "hi" | "hinglish";
       };
     }
   | { name: "lead_submit"; props: { interest: string } }

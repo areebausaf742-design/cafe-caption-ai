@@ -3,9 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowUpRight, Clock } from "lucide-react";
 
-import MenuCard from "@/components/menu/MenuCard";
-import MenuOrder from "@/components/menu/MenuOrder";
-import { SLUG_RE, toDigitalMenu, type MenuDoc } from "@/lib/menu";
+import MenuLanguages from "@/components/menu/MenuLanguages";
+import { SLUG_RE, type MenuDoc } from "@/lib/menu";
 import { menuStoreConfigured, readPublicMenu } from "@/lib/menu-store";
 
 /**
@@ -94,7 +93,6 @@ export default async function MenuPage({ params }: Props) {
 
   if (!menu) notFound();
 
-  const menuData = toDigitalMenu(menu.items);
   const updated = menu.updatedAt
     ? new Date(menu.updatedAt).toLocaleDateString("en-IN", {
         day: "numeric",
@@ -120,24 +118,16 @@ export default async function MenuPage({ params }: Props) {
         </p>
       )}
 
+      {/* One island: the language switcher, the card, and the cart live in the
+          same client tree so switching language never resets an order. */}
       <div className="mt-3">
-        {menu.whatsapp ? (
-          <MenuOrder
-            slug={slug}
-            cafeName={menu.cafeName}
-            menu={menuData}
-            items={menu.items}
-            whatsapp={menu.whatsapp}
-            updated={updated}
-          />
-        ) : (
-          <MenuCard
-            menu={menuData}
-            cafeName={menu.cafeName}
-            isSample={false}
-            updated={updated}
-          />
-        )}
+        <MenuLanguages
+          slug={slug}
+          cafeName={menu.cafeName}
+          items={menu.items}
+          whatsapp={menu.whatsapp}
+          updated={updated}
+        />
       </div>
 
       {orderable && (

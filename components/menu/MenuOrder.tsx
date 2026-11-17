@@ -14,6 +14,7 @@ import {
 
 import MenuCard from "@/components/menu/MenuCard";
 import { track } from "@/lib/analytics";
+import type { MenuLanguage } from "@/lib/menu-translate";
 import {
   MAX_INSTRUCTIONS,
   MAX_LINES,
@@ -47,6 +48,7 @@ export default function MenuOrder({
   items,
   whatsapp,
   updated,
+  language = "en",
 }: {
   slug: string;
   cafeName: string;
@@ -54,6 +56,8 @@ export default function MenuOrder({
   items: MenuItem[];
   whatsapp: string;
   updated?: string | null;
+  /** What the customer is reading the menu in. Display only — see below. */
+  language?: MenuLanguage;
 }) {
   const [quantities, setQuantities] = useState<Quantities>({});
   const [open, setOpen] = useState(false);
@@ -147,10 +151,16 @@ export default function MenuOrder({
           </div>
 
           <ul className="mt-3 space-y-2">
-            {order.lines.map((line) => (
+            {order.lines.map((line) => {
+              // `menu` is the localised view and `items` the printed one, both
+              // index-aligned: the customer recognises the row in their own
+              // language while the café still receives its own words.
+              const label = menu.items[line.index]?.name || line.name;
+
+              return (
               <li key={line.index} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 text-[12.5px] leading-[1.45] text-espresso-900">
-                  {line.name}
+                  {label}
                   <span className="ml-1 tabular-nums text-espresso-400">
                     {line.unit === null ? "" : `· ${formatAmount(line.unit)}`}
                   </span>
@@ -160,7 +170,7 @@ export default function MenuOrder({
                   <button
                     type="button"
                     onClick={() => step(line.index, -1)}
-                    aria-label={`One less ${line.name}`}
+                    aria-label={`One less ${label}`}
                     className="tap flex h-8 w-7 items-center justify-center rounded-l-lg border border-espresso-900/[0.14] bg-white/70 text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
                   >
                     <Minus className="h-3 w-3" aria-hidden />
@@ -171,7 +181,7 @@ export default function MenuOrder({
                   <button
                     type="button"
                     onClick={() => step(line.index, 1)}
-                    aria-label={`One more ${line.name}`}
+                    aria-label={`One more ${label}`}
                     className="tap flex h-8 w-7 items-center justify-center rounded-r-lg border border-espresso-900/[0.14] bg-white/70 text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
                   >
                     <Plus className="h-3 w-3" aria-hidden />
@@ -182,7 +192,8 @@ export default function MenuOrder({
                   {line.lineTotal === null ? "—" : formatAmount(line.lineTotal)}
                 </span>
               </li>
-            ))}
+              );
+            })}
           </ul>
 
           <div className="mt-3 flex items-baseline justify-between border-t border-dashed border-espresso-900/[0.14] pt-2.5">
@@ -240,6 +251,8 @@ export default function MenuOrder({
             {sent
               ? "WhatsApp should be open with your order. Nothing is sent until you press send there."
               : "Opens WhatsApp with the order typed out. Pay at the counter — nothing is charged here."}
+            {language !== "en" &&
+              " Item names go to the café in English, exactly as they print them."}
           </p>
         </section>
       )}

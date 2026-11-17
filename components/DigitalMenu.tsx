@@ -37,6 +37,7 @@ import {
 } from "@/lib/image";
 import {
   requestGeneration,
+  requestTranslations,
   retryAfterLabel,
   type StudioError,
 } from "@/lib/studio-client";
@@ -45,6 +46,11 @@ import { track } from "@/lib/analytics";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { MENU_DEMO_URL } from "@/lib/business";
 import { MAX_ITEMS, toDigitalMenu } from "@/lib/menu";
+import {
+  hasAnyTranslation,
+  stitchTranslations,
+  translatableLines,
+} from "@/lib/menu-translate";
 import {
   addItem,
   cafeNameProblem,
@@ -135,6 +141,10 @@ export default function DigitalMenuStudio({
   // letting an unsaved change look saved.
   const [publishedItems, setPublishedItems] = useState<MenuItem[] | null>(null);
   const [publishing, setPublishing] = useState(false);
+  // Translating happens inside the publish click: it's part of publishing, not a
+  // separate chore, and a failure never stops the menu going live.
+  const [translating, setTranslating] = useState(false);
+  const [translationNote, setTranslationNote] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [editCopied, setEditCopied] = useState(false);
   const editCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -352,6 +362,26 @@ export default function DigitalMenuStudio({
     setPublishing(true);
     setPublishError(null);
 
+    // Hindi and Hinglish are written once, here, and stored with the items — so
+    // a customer switching language on the table never waits for a model.
+    let publishItems = menu.items;
+    if (!hasAnyTranslation(publishItems)) {
+      setTranslating(true);
+      const outcome = await requestTranslations(translatableLines(publishItems));
+      setTranslating(false);
+
+      if (outcome.ok) {
+        publishItems = stitchTranslations(publishItems, outcome.translations);
+        setItems(publishItems);
+        setTranslationNote(null);
+      } else {
+        // Publish in English rather than hold a café's menu hostage to a model.
+        setTranslationNote(
+          `${outcome.error.message} Publishing in English — the language switch will be added next time.`,
+        );
+      }
+    }
+
     try {
       const response = await fetch("/api/menus", {
         method: "POST",
@@ -359,7 +389,7 @@ export default function DigitalMenuStudio({
         body: JSON.stringify({
           cafeName: cafeName.trim(),
           whatsapp: orderDigits,
-          items: menu.items,
+          items: publishItems,
         }),
       });
 
@@ -374,19 +404,21 @@ export default function DigitalMenuStudio({
       }
 
       setPublished({ slug: body.slug, url: body.url, editUrl: body.editUrl });
-      setPublishedItems(menu.items);
+      setPublishedItems(publishItems);
       track({
         name: "menu_publish",
         props: {
           items: menu.items.length,
           categories: menu.categoryCount,
           attempt: published ? "again" : "first",
+          translated: hasAnyTranslation(publishItems),
         },
       });
     } catch {
       setPublishError("Couldn't reach the server. Your menu is still here.");
     } finally {
       setPublishing(false);
+      setTranslating(false);
     }
   }, [menu, draft, publishing, cafeName, orderDigits, published]);
 
@@ -639,6 +671,11 @@ export default function DigitalMenuStudio({
                 {itemCount} {itemCount === 1 ? "item" : "items"}
               </span>
               <span className="tag">{shown.categoryCount} sections</span>
+              {!isSample && hasAnyTranslation(items ?? []) && (
+                <span className="tag" lang="hi">
+                  हिंदी + Hinglish
+                </span>
+              )}
               {!isSample && (
                 <button
                   type="button"
@@ -735,6 +772,19 @@ export default function DigitalMenuStudio({
                     )}
                   </button>
 
+                  {translationNote && (
+                    <p
+                      role="status"
+                      className="mt-2.5 flex items-start gap-1.5 rounded-lg bg-caramel-50/80 px-2.5 py-2 text-left text-[9.5px] leading-[1.5] text-espresso-800"
+                    >
+                      <AlertCircle
+                        className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600"
+                        aria-hidden
+                      />
+                      <span>{translationNote}</span>
+                    </p>
+                  )}
+
                   {published ? (
                     <div className="mt-3 space-y-2 text-left">
                       <p className="flex items-start gap-1.5 rounded-lg bg-sage-100/80 px-2.5 py-2 text-[10px] leading-[1.5] text-espresso-700">
@@ -809,7 +859,7 @@ export default function DigitalMenuStudio({
                         {publishing ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Publishing…
+                            {translating ? "Adding हिंदी + Hinglish…" : "Publishing…"}
                           </>
                         ) : (
                           <>
@@ -826,7 +876,7 @@ export default function DigitalMenuStudio({
                       ) : (
                         <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-500/70">
                           {menu
-                            ? "Puts it live on its own link — no account needed."
+                            ? "Puts it live on its own link, with Hindi and Hinglish for customers who need them. No account needed."
                             : "Read a menu photo first, then publish it."}
                         </p>
                       )}

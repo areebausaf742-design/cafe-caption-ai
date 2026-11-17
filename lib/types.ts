@@ -44,6 +44,27 @@ export interface GooglePost {
   characters: number;
 }
 
+/**
+ * The languages a menu can be read in *besides* the one it was printed in.
+ *
+ * English is never listed: the printed name is the original, and every other
+ * language is an overlay on it. Keeping the original as the base means a menu
+ * with lost or failed translations still reads correctly.
+ */
+export const TRANSLATION_LANGUAGES = ["hi", "hinglish"] as const;
+
+export type TranslationLanguage = (typeof TRANSLATION_LANGUAGES)[number];
+
+/** One line, translated. Prices are never part of this — they don't translate. */
+export interface MenuTranslation {
+  category: string;
+  name: string;
+}
+
+export type MenuTranslations = Partial<
+  Record<TranslationLanguage, MenuTranslation>
+>;
+
 /** One line of a digitised menu. */
 export interface MenuItem {
   /** Section it sits under, e.g. "Beverages" or "Sandwiches". */
@@ -52,6 +73,13 @@ export interface MenuItem {
   name: string;
   /** Price as printed, with its currency symbol ("₹180"). */
   price: string;
+  /**
+   * Optional Hindi and Hinglish names for this line, written once at publish
+   * time. Absent on old menus, on menus translated before a row was renamed,
+   * and on any row the model declined to translate — the card falls back to the
+   * printed name, so a missing translation is never a broken menu.
+   */
+  translations?: MenuTranslations;
 }
 
 /** A menu read off a photo, ready to render. */

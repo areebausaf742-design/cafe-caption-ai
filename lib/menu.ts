@@ -7,7 +7,12 @@
  * Nothing in this file is secret or server-only, so it can be imported anywhere.
  */
 
-import type { DigitalMenu, MenuItem } from "@/lib/types";
+import {
+  TRANSLATION_LANGUAGES,
+  type DigitalMenu,
+  type MenuItem,
+  type MenuTranslations,
+} from "@/lib/types";
 
 /* -------------------------------------------------------------------------- */
 /*  Limits (mirrored by the checks in supabase/schema.sql)                    */
@@ -55,6 +60,38 @@ function text(value: unknown, max: number): string {
 }
 
 /**
+ * Hindi and Hinglish overlays, re-validated like everything else.
+ *
+ * A language is kept only when it has a name; a translation with no category
+ * borrows the printed one, because a section heading is not worth losing the
+ * translation over. Malformed values are dropped rather than published.
+ */
+function normalizeTranslations(
+  raw: unknown,
+  fallbackCategory: string,
+): MenuTranslations | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const source = raw as Record<string, unknown>;
+  const out: MenuTranslations = {};
+
+  for (const language of TRANSLATION_LANGUAGES) {
+    const entry = source[language];
+    if (typeof entry !== "object" || entry === null) continue;
+
+    const row = entry as Record<string, unknown>;
+    const name = text(row.name, MAX_ITEM_NAME);
+    if (!name) continue;
+
+    out[language] = {
+      category: text(row.category, MAX_CATEGORY) || fallbackCategory,
+      name,
+    };
+  }
+
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
  * Items arrive from the model (or the editor), so every field is re-validated
  * here rather than trusted. Items with no name or no price are dropped instead
  * of failing the whole menu — one blank row shouldn't cost you the publish.
@@ -69,11 +106,15 @@ export function normalizeItems(input: unknown): MenuItem[] {
     const name = text(row.name, MAX_ITEM_NAME);
     const price = text(row.price, MAX_PRICE);
     if (!name || !price) continue;
-    items.push({
-      category: text(row.category, MAX_CATEGORY) || "Menu",
-      name,
-      price,
-    });
+
+    const category = text(row.category, MAX_CATEGORY) || "Menu";
+    const translations = normalizeTranslations(row.translations, category);
+
+    items.push(
+      translations
+        ? { category, name, price, translations }
+        : { category, name, price },
+    );
   }
   return items;
 }

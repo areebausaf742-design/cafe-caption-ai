@@ -62,6 +62,13 @@ export default function PrivacyPage() {
               a menu down, use the contact details below and it will be removed.
             </li>
             <li>
+              <strong>Menu languages</strong> — when a menu is published, the
+              item and section names are sent once to Google&rsquo;s Gemini API
+              so it can be read in Hindi and Hinglish. <strong>Prices are never
+              sent</strong> — only names — so a translation cannot change what
+              anything costs. The translated names are stored with the menu.
+            </li>
+            <li>
               <strong>Menu orders</strong> — when someone orders from a menu,
               the cart is put together in their own browser and handed to
               WhatsApp. It never passes through this site&rsquo;s servers, so we
@@ -109,7 +116,8 @@ export default function PrivacyPage() {
             We use PostHog to count page views and a handful of product events:
             a caption, menu or Google reply generated, a photo uploaded, a QR
             downloaded, something copied, a quote form submitted, a menu
-            published, and a button clicked (with the button&apos;s location and
+            published, a menu switched into another language, and a button
+            clicked (with the button&apos;s location and
             label). These
             events never include names, phone numbers, email addresses or the
             text you type. PostHog runs in memory-only mode here, so no cookies
