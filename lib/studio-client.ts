@@ -6,6 +6,7 @@
  * first), and errors that already read like sentences. Keeping it here means
  * the caption tab and the Local SEO tab can't drift apart.
  */
+import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
 import type { ApiError, GenerateRequest, GenerateResponse } from "@/lib/types";
 
 export interface StudioError {
@@ -96,4 +97,82 @@ export async function requestGeneration(
 /** "Try again in about 40s" / "…about 3 min". */
 export function retryAfterLabel(seconds: number): string {
   return `about ${seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Menu translation                                                          */
+/* -------------------------------------------------------------------------- */
+
+export type TranslationOutcome =
+  | { ok: true; translations: TranslationPayload }
+  | { ok: false; error: StudioError };
+
+/**
+ * Ask for Hindi + Hinglish for the printed lines.
+ *
+ * Translation is a nicety, publishing is not: every caller is expected to
+ * publish in English when this fails, which is why it returns an error object
+ * instead of throwing. Timeout is shorter than `/api/generate`'s because the
+ * server does at most three parallel calls of 20s each.
+ */
+export async function requestTranslations(
+  items: TranslatedLine[],
+): Promise<TranslationOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 50_000);
+
+  try {
+    const response = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+      signal: controller.signal,
+    });
+
+    const data: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const apiError = data as ApiError | null;
+      return {
+        ok: false,
+        error: {
+          message:
+            apiError?.error ??
+            `The translator didn't answer (${response.status}).`,
+          hint: apiError?.hint,
+          retryAfter: apiError?.retryAfter,
+          status: response.status,
+          code: apiError?.code,
+        },
+      };
+    }
+
+    const translations = (data as { translations?: TranslationPayload } | null)
+      ?.translations;
+
+    if (!translations || typeof translations !== "object") {
+      return {
+        ok: false,
+        error: {
+          message: "The translator sent back something unexpected.",
+          status: response.status,
+        },
+      };
+    }
+
+    return { ok: true, translations };
+  } catch (error) {
+    const aborted = error instanceof DOMException && error.name === "AbortError";
+    return {
+      ok: false,
+      error: {
+        message: aborted
+          ? "Translating took too long. Your menu is still here — publish in English, or try again."
+          : "Couldn't reach the translator. Your menu is still here.",
+        status: 0,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }

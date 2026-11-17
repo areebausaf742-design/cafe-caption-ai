@@ -31,8 +31,11 @@ import { siteUrl } from "@/lib/site";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Twelve items of JSON per publish, and a hard ceiling on the body anyway. */
-const MAX_BODY_BYTES = 64_000;
+/**
+ * 120 items now carry up to three languages each, so the ceiling has room for
+ * the worst case (120 lines, Hindi + Hinglish on every one) with a margin.
+ */
+const MAX_BODY_BYTES = 128_000;
 
 /** A menu is a bigger write than a lead, so it gets a tighter window. */
 const LIMIT = { namespace: "menu-publish", max: 5, windowMs: 10 * 60 * 1000 };

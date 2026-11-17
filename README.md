@@ -550,6 +550,49 @@ IP**, shared across instances when Upstash is configured. Always returns
 `200 { ok: true, stored }` for a valid submission so the UI can offer the
 WhatsApp handoff.
 
+### Menu languages (Hindi + Hinglish)
+
+Menus carry an optional overlay per line: `translations: { hi: { category,
+name }, hinglish: { category, name } }`. The printed name stays the base, so a
+row with no translation — an old menu, a row renamed in the editor, a model that
+declined — reads in the original language instead of going blank.
+
+Translation happens **once, at publish time**, in `POST /api/translate`, and the
+result is stored with the items by `POST /api/menus`. The customer's switcher is
+then pure client state (`components/menu/MenuLanguages.tsx`): no request, no
+spinner, no cost per scan, and switching language never resets a cart because
+the switcher, the card and the cart live in one island.
+
+```jsonc
+// what is sent — note the absence of a price field
+{ "items": [{ "category": "Beverages", "name": "Masala Chai" }] }
+
+// what comes back
+{ "translations": {
+    "hi":       [{ "category": "पेय", "name": "मसाला चाय" }],
+    "hinglish": [{ "category": "Beverages", "name": "Masala Chai" }] } }
+```
+
+**Prices are never sent to the translator**, so a translation cannot change what
+anything costs — the guarantee is structural, not a prompt instruction. A
+language whose list comes back the wrong length is dropped whole rather than
+shifted by one row, because the wrong Hindi beside a price is worse than English.
+For the same reason each language is judged on its own: a model that fumbles the
+Roman-script pass still leaves the café its Hindi, and a language that only half
+a menu got is dropped entirely rather than offered thin. Where a language covers
+part of the menu, the switcher says so in words — "हिंदी covers 18 of 24 items —
+the rest stay in the printed language" — before the customer taps.
+
+If translation fails, the studio publishes in English and says so: a translator
+outage must never stop a café going live. The editor can add the languages later
+("Translate" in the Items card) and drops the overlay on any row whose printed
+name has changed, so stale Hindi never appears beside a renamed dish.
+
+`POST /api/translate` takes `{ items: [{ category, name }] }` (≤ 120 lines,
+32 KB), is rate limited to **6 / 10 min per IP**, and returns `503
+GENERATION_DISABLED` without a Gemini key, `502 TRANSLATION_FAILED` when every
+model attempt fails.
+
 ### `POST /api/menus`
 
 Publishes a menu and returns `{ ok, slug, url, editUrl, key }` — `201`, and the
@@ -653,6 +696,7 @@ components/
   menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
   menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
   menu/MenuOrder.tsx       # the cart: steppers, order sheet, wa.me handoff
+  menu/MenuLanguages.tsx   # language switcher + card + cart, one island
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick

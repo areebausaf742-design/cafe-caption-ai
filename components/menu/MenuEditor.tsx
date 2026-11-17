@@ -6,6 +6,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  Languages,
   Loader2,
   Plus,
   Trash2,
@@ -22,6 +23,13 @@ import {
   type MenuDoc,
   type MenuDraft,
 } from "@/lib/menu";
+import {
+  missingTranslations,
+  pruneStaleTranslations,
+  stitchTranslations,
+  translatableLines,
+} from "@/lib/menu-translate";
+import { requestTranslations } from "@/lib/studio-client";
 import type { MenuItem } from "@/lib/types";
 
 /**
@@ -56,6 +64,8 @@ export default function MenuEditor({ slug }: { slug: string }) {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copied, setCopied] = useState<"menu" | "editor" | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateNote, setTranslateNote] = useState<string | null>(null);
 
   const keyRef = useRef<string>("");
   const [origin, setOrigin] = useState("");
@@ -180,13 +190,20 @@ export default function MenuEditor({ slug }: { slug: string }) {
     setSaveError(null);
 
     try {
+      // A renamed row can't keep the translation written for the old name.
+      // Prices are untouched by this — the comparison is name and section only.
+      const payload = {
+        ...draft,
+        items: pruneStaleTranslations(draft.items, saved?.items ?? []),
+      };
+
       const response = await fetch(`/api/menus/${slug}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "x-menu-key": keyRef.current,
         },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => ({}));
 
@@ -207,7 +224,30 @@ export default function MenuEditor({ slug }: { slug: string }) {
     } finally {
       setSaving(false);
     }
-  }, [draft, saving, slug]);
+  }, [draft, saved, saving, slug]);
+
+  /* ----------------------------- translating ----------------------------- */
+
+  const untranslated = draft ? missingTranslations(draft.items, "hi") : 0;
+
+  const translateNow = useCallback(async () => {
+    if (!draft || translating) return;
+
+    setTranslating(true);
+    setTranslateNote(null);
+
+    const outcome = await requestTranslations(translatableLines(draft.items));
+    setTranslating(false);
+
+    if (!outcome.ok) {
+      setTranslateNote(`${outcome.error.message} Nothing was changed.`);
+      return;
+    }
+
+    const items = stitchTranslations(draft.items, outcome.translations);
+    setDraft((current) => (current ? { ...current, items } : current));
+    setTranslateNote("Hindi and Hinglish added. Save to put them on the live menu.");
+  }, [draft, translating]);
 
   /* -------------------------------- copying ------------------------------ */
 
@@ -373,6 +413,41 @@ export default function MenuEditor({ slug }: { slug: string }) {
           Items with the same section name are grouped together, in the order they
           appear here.
         </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-cream-50/70 px-2.5 py-2">
+          <Languages className="h-3 w-3 shrink-0 text-espresso-400" aria-hidden />
+          <p className="min-w-0 flex-1 text-[10.5px] leading-[1.5] text-espresso-600">
+            {draft.items.length === 0
+              ? "Translate the menu so customers can read it in Hindi or Hinglish."
+              : untranslated === 0
+                ? "Hindi + Hinglish on every row — customers can switch language."
+                : `Hindi + Hinglish on ${draft.items.length - untranslated} of ${draft.items.length} rows. Prices never change.`}
+          </p>
+          <button
+            type="button"
+            onClick={() => void translateNow()}
+            disabled={translating || draft.items.length === 0}
+            className="btn-outline tap inline-flex min-h-[34px] shrink-0 items-center gap-1.5 px-2.5 text-[10.5px] disabled:opacity-50"
+          >
+            {translating && (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            )}
+            {translating
+              ? "Translating…"
+              : untranslated === 0
+                ? "Re-translate"
+                : "Translate"}
+          </button>
+        </div>
+
+        {translateNote && (
+          <p
+            role="status"
+            className="mt-2 text-[10.5px] leading-[1.5] text-espresso-600"
+          >
+            {translateNote}
+          </p>
+        )}
 
         <ul className="mt-3 space-y-2">
           {draft.items.map((item, index) => (
