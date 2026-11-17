@@ -21,7 +21,7 @@ Gemini key is read only inside a `server-only` Route Handler.
 | Section | Purpose |
 | --- | --- |
 | Sticky header | Wordmark, anchor nav, WhatsApp CTA |
-| Hero + studio | The free tool, in three tabs. **Instagram captions**: photo or description, café name, city, language, tone, copy buttons, regenerate, one-tap examples and a sample result before the first click. **Google Local SEO**: review responder (paste a review + 1–5★ → three replies with different strategies) and Google post generator (one-line brief → 100–150 word local post with a character meter). **Digital menu**: a photo of the printed menu → categories, items and prices as a mobile-first menu preview, plus a QR code you can download as a PNG |
+| Hero + studio | The free tool, in three tabs. **Instagram captions**: photo or description, café name, city, language, tone, copy buttons, regenerate, one-tap examples and a sample result before the first click. **Google Local SEO**: review responder (paste a review + 1–5★ → three replies with different strategies) and Google post generator (one-line brief → 100–150 word local post with a character meter). **Digital menu**: a photo of the printed menu → categories, items and prices as a mobile-first preview you can **correct in place** (rename a section, fix a price, add or remove a row) before publishing, plus a QR code you can download as a PNG |
 | Packages | Three fixed-price offers (₹4,999 / **₹10,000 “Most popular”** / ₹18,500), each with a WhatsApp CTA |
 | How it works | Three-step process with a “book a free call” link |
 | FAQ | Native `<details>` accordion, also emitted as FAQ structured data |
@@ -647,8 +647,9 @@ components/
   motion/SmoothScroll.tsx  # Lenis inertial wheel + eased in-page anchors
   CaptionStudio.tsx        # studio shell: tabs, café details shared by both tools
   LocalSeoStudio.tsx       # Google tab: review responder + post generator
-  DigitalMenu.tsx          # menu tab: photo → menu preview + QR PNG download
+  DigitalMenu.tsx          # menu tab: photo → editable preview + QR PNG download
   menu/MenuCard.tsx        # menu layout, shared by studio, demo and live menus
+                           #   (takes an optional `edit` prop to become inputs)
   menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
   menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
   menu/MenuOrder.tsx       # the cart: steppers, order sheet, wa.me handoff

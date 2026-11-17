@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -36,7 +36,15 @@ import MenuCard from "@/components/menu/MenuCard";
 import { track } from "@/lib/analytics";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { MENU_DEMO_URL } from "@/lib/business";
-import type { DigitalMenu as MenuData } from "@/lib/types";
+import { MAX_ITEMS, toDigitalMenu } from "@/lib/menu";
+import {
+  addItem,
+  checkDraft,
+  removeItem,
+  renameSection,
+  setItemField,
+} from "@/lib/menu-draft";
+import type { DigitalMenu as MenuData, MenuItem } from "@/lib/types";
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -62,9 +70,21 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   const [preparing, setPreparing] = useState(false);
 
   const [status, setStatus] = useState<Status>("idle");
-  const [menu, setMenu] = useState<MenuData | null>(null);
+  // The rows, not the card: categories and section counts are derived from them
+  // (`toDigitalMenu`), so renaming a section can never leave the preview out of
+  // step with what `POST /api/menus` receives.
+  const [items, setItems] = useState<MenuItem[] | null>(null);
   const [error, setError] = useState<StudioError | null>(null);
   const [downloaded, setDownloaded] = useState(false);
+
+  const menu = useMemo<MenuData | null>(
+    () => (items ? toDigitalMenu(items) : null),
+    [items],
+  );
+
+  // Everything that would be truncated or dropped by the publish route, in one
+  // place. Null until a menu has been read.
+  const draft = useMemo(() => (items ? checkDraft(items) : null), [items]);
 
   // The WhatsApp number lives here, not in the order panel, so re-reading a
   // photo doesn't wipe what the owner just typed.
@@ -80,6 +100,9 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     url: string;
     editUrl: string;
   } | null>(null);
+  // What actually went live, so editing afterwards can say so instead of
+  // letting an unsaved change look saved.
+  const [publishedItems, setPublishedItems] = useState<MenuItem[] | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [editCopied, setEditCopied] = useState(false);
@@ -122,7 +145,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       });
       // A new photo means the old menu is stale.
       setStatus("idle");
-      setMenu(null);
+      setItems(null);
       setError(null);
       track({ name: "photo_upload", props: { outcome: "ready" } });
     } catch (err) {
@@ -148,7 +171,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     setImageError(null);
     setPreparing(false);
     setStatus("idle");
-    setMenu(null);
+    setItems(null);
     setError(null);
   }, []);
 
@@ -174,7 +197,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
 
     setStatus("loading");
     setError(null);
-    setMenu(null);
+    setItems(null);
 
     const outcome = await requestGeneration({
       type: "digital_menu",
@@ -198,7 +221,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       return;
     }
 
-    setMenu(outcome.data.menu);
+    setItems(outcome.data.menu.items);
     setStatus("success");
 
     track({
@@ -211,14 +234,46 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   }, [image, cafeName]);
 
   const reset = () => {
-    setMenu(null);
+    setItems(null);
     setError(null);
     setStatus("idle");
     // A new menu is a new menu: the old URL stays live, but this session goes
     // back to the demo code rather than quietly reusing it.
     setPublished(null);
+    setPublishedItems(null);
     setPublishError(null);
   };
+
+  /* ------------------------- editing the draft ---------------------------- */
+  // Every setter is pure over `items` (see `lib/menu-draft`) and clamps to the
+  // limits `POST /api/menus` enforces, so the studio can't build a value the
+  // server would quietly cut. Clearing `publishError` keeps a stale complaint
+  // from outliving the row that caused it.
+
+  const editField = useCallback(
+    (index: number, field: "name" | "price", value: string) => {
+      setItems((current) =>
+        current ? setItemField(current, index, field, value) : current,
+      );
+      setPublishError(null);
+    },
+    [],
+  );
+
+  const editRemove = useCallback((index: number) => {
+    setItems((current) => (current ? removeItem(current, index) : current));
+    setPublishError(null);
+  }, []);
+
+  const editAdd = useCallback((category: string) => {
+    setItems((current) => (current ? addItem(current, category) : current));
+    setPublishError(null);
+  }, []);
+
+  const editSection = useCallback((from: string, to: string) => {
+    setItems((current) => (current ? renameSection(current, from, to) : current));
+    setPublishError(null);
+  }, []);
 
   /* --------------------------- WhatsApp ordering -------------------------- */
 
@@ -245,7 +300,14 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   /* ------------------------------ Publishing ------------------------------ */
 
   const publish = useCallback(async () => {
-    if (!menu || publishing) return;
+    if (!menu || !draft || publishing) return;
+
+    // The API would drop or truncate these rows without saying so. Say so here
+    // instead, before anything is sent.
+    if (!draft.canPublish) {
+      setPublishError(draft.message);
+      return;
+    }
 
     if (cafeName.trim().length < 2) {
       setPublishError("Add your café's name in the box above, then publish.");
@@ -277,6 +339,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       }
 
       setPublished({ slug: body.slug, url: body.url, editUrl: body.editUrl });
+      setPublishedItems(menu.items);
       track({
         name: "menu_publish",
         props: {
@@ -290,7 +353,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
     } finally {
       setPublishing(false);
     }
-  }, [menu, publishing, cafeName, orderDigits, published]);
+  }, [menu, draft, publishing, cafeName, orderDigits, published]);
 
   const copyEditLink = useCallback(async () => {
     if (!published) return;
@@ -380,6 +443,13 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
   const itemCount = shown.items.length;
   // The QR encodes the published menu when there is one, the demo otherwise.
   const qrUrl = published?.url ?? MENU_DEMO_URL;
+  // Editing after publishing doesn't touch the live page — the editor link does
+  // that — so say it rather than let the change look saved.
+  const editedSincePublish = Boolean(
+    publishedItems &&
+      items &&
+      JSON.stringify(items) !== JSON.stringify(publishedItems),
+  );
 
   /* -------------------------------- view -------------------------------- */
 
@@ -527,11 +597,44 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
               )}
             </div>
 
+            {!isSample && (
+              <p className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500">
+                Tap any name, price or section heading to fix what the photo got
+                wrong. Add or remove rows here — this is exactly what gets
+                published. A published menu holds up to {MAX_ITEMS} items.
+              </p>
+            )}
+
+            {!isSample && draft?.message && (
+              <p
+                role="status"
+                className="mt-2 flex items-start gap-1.5 rounded-lg bg-caramel-50/80 px-2.5 py-2 text-[10.5px] leading-[1.55] text-espresso-800"
+              >
+                <AlertCircle
+                  className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600"
+                  aria-hidden
+                />
+                <span>{draft.message}</span>
+              </p>
+            )}
+
             <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_248px]">
               <MenuCard
                 menu={shown}
                 cafeName={cafeName.trim()}
                 isSample={isSample}
+                edit={
+                  isSample
+                    ? undefined
+                    : {
+                        onField: editField,
+                        onRemove: editRemove,
+                        onAdd: editAdd,
+                        onRenameCategory: editSection,
+                        flagged: draft?.flawed,
+                        canAdd: draft?.canAdd ?? false,
+                      }
+                }
               />
 
               <div className="space-y-3">
@@ -596,6 +699,19 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
                             : "."}
                         </span>
                       </p>
+
+                      {editedSincePublish && (
+                        <p className="flex items-start gap-1.5 rounded-lg bg-caramel-50/80 px-2.5 py-2 text-[10px] leading-[1.5] text-espresso-800">
+                          <AlertCircle
+                            className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600"
+                            aria-hidden
+                          />
+                          <span>
+                            This menu has changed since it was published. Open
+                            the editor link and save to update the live page.
+                          </span>
+                        </p>
+                      )}
 
                       <a
                         href={published.editUrl}
