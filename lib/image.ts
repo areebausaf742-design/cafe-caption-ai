@@ -167,13 +167,19 @@ function canvasToBlob(
   });
 }
 
-/** Draw the source onto a white canvas and export JPEG at the given size. */
-async function encodeJpeg(
+/**
+ * Draw the source onto a white canvas at the requested size.
+ *
+ * The canvas — and the full-image draw into it — is the expensive part of this
+ * pipeline. Re-exporting the same pixels at a different JPEG quality costs a
+ * fraction of that, so the canvas is built once per *resolution* and reused for
+ * every quality step (see `prepareImage`).
+ */
+function drawToCanvas(
   source: DecodedSource,
   width: number,
   height: number,
-  quality: number,
-): Promise<Blob> {
+): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -193,14 +199,7 @@ async function encodeJpeg(
   context.imageSmoothingQuality = "high";
   context.drawImage(source, 0, 0, width, height);
 
-  const blob = await canvasToBlob(canvas, quality);
-  if (!blob) {
-    throw new ImagePrepError(
-      "decode_failed",
-      "That photo couldn't be processed — try a different one.",
-    );
-  }
-  return blob;
+  return canvas;
 }
 
 function collectOriginalSize(source: DecodedSource): {
@@ -257,56 +256,84 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   }
 
   const source = await decodeImage(file);
-  const original = collectOriginalSize(source);
 
-  if (original.width < 2 || original.height < 2) {
-    throw new ImagePrepError(
-      "decode_failed",
-      "That photo looks empty — try a different one.",
-    );
-  }
+  // `close()` releases decoded pixels that live outside the JS heap, and an
+  // ImageBitmap is only ever closed by hand. It belongs in `finally`: the old
+  // code closed it on the success path, so an unsupported photo (width < 2) or a
+  // failed encode leaked the bitmap until GC felt like it.
+  try {
+    const original = collectOriginalSize(source);
 
-  let best: Blob | null = null;
-  let dimensions = fitWithin(original.width, original.height, MAX_EDGE_PX);
-
-  // Walk resolution then quality until the payload fits. In practice a 12 MP
-  // phone photo lands on the first or second rung at ~150–400 KB.
-  search: for (const edge of EDGE_STEPS) {
-    const target = fitWithin(original.width, original.height, edge);
-    for (const quality of JPEG_QUALITIES) {
-      const blob = await encodeJpeg(
-        source,
-        target.width,
-        target.height,
-        quality,
+    if (original.width < 2 || original.height < 2) {
+      throw new ImagePrepError(
+        "decode_failed",
+        "That photo looks empty — try a different one.",
       );
-      best = blob;
-      dimensions = target;
-      if (blob.size <= TARGET_MAX_BYTES) break search;
+    }
+
+    let best: Blob | null = null;
+    let dimensions = fitWithin(original.width, original.height, MAX_EDGE_PX);
+
+    // Walk resolution, then quality, until the payload fits. In practice a
+    // 12 MP phone photo lands on the first or second rung at ~150–400 KB.
+    //
+    // Draw once per distinct size: a photo smaller than the first few rungs
+    // produces identical targets, and redrawing identical pixels was the bulk
+    // of the old cost.
+    let canvas: HTMLCanvasElement | null = null;
+    let drawnWidth = 0;
+    let drawnHeight = 0;
+
+    search: for (const edge of EDGE_STEPS) {
+      const target = fitWithin(original.width, original.height, edge);
+
+      if (
+        !canvas ||
+        target.width !== drawnWidth ||
+        target.height !== drawnHeight
+      ) {
+        canvas = drawToCanvas(source, target.width, target.height);
+        drawnWidth = target.width;
+        drawnHeight = target.height;
+      }
+
+      for (const quality of JPEG_QUALITIES) {
+        const blob = await canvasToBlob(canvas, quality);
+        if (!blob) {
+          throw new ImagePrepError(
+            "decode_failed",
+            "That photo couldn't be processed — try a different one.",
+          );
+        }
+
+        best = blob;
+        dimensions = target;
+        if (blob.size <= TARGET_MAX_BYTES) break search;
+      }
+    }
+
+    if (!best || best.size > TARGET_MAX_BYTES) {
+      throw new ImagePrepError(
+        "too_large_after_compress",
+        "That photo couldn't be shrunk enough. Try a different shot.",
+      );
+    }
+
+    return {
+      base64: await blobToBase64(best),
+      mimeType: "image/jpeg",
+      width: dimensions.width,
+      height: dimensions.height,
+      bytes: best.size,
+      originalBytes: file.size,
+      previewUrl: URL.createObjectURL(best),
+      fileName: file.name || "photo.jpg",
+    };
+  } finally {
+    if ("close" in source && typeof source.close === "function") {
+      source.close();
     }
   }
-
-  if ("close" in source && typeof source.close === "function") {
-    source.close();
-  }
-
-  if (!best || best.size > TARGET_MAX_BYTES) {
-    throw new ImagePrepError(
-      "too_large_after_compress",
-      "That photo couldn't be shrunk enough. Try a different shot.",
-    );
-  }
-
-  return {
-    base64: await blobToBase64(best),
-    mimeType: "image/jpeg",
-    width: dimensions.width,
-    height: dimensions.height,
-    bytes: best.size,
-    originalBytes: file.size,
-    previewUrl: URL.createObjectURL(best),
-    fileName: file.name || "photo.jpg",
-  };
 }
 
 /** Free the preview object URL when a photo is replaced or removed. */

@@ -84,12 +84,22 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
 
   /* ------------------------------- photo -------------------------------- */
 
+  // Same guard as the caption tab: two photos in quick succession decode on
+  // their own schedule, and the slower one must not win.
+  const uploadSeq = useRef(0);
+
   const handlePhoto = useCallback(async (file: File) => {
+    const seq = ++uploadSeq.current;
+
     setImageError(null);
     setPreparing(true);
 
     try {
       const prepared = await prepareImage(file);
+      if (seq !== uploadSeq.current) {
+        releaseImage(prepared);
+        return;
+      }
       setImage((previous) => {
         releaseImage(previous);
         return prepared;
@@ -100,6 +110,7 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       setError(null);
       track({ name: "photo_upload", props: { outcome: "ready" } });
     } catch (err) {
+      if (seq !== uploadSeq.current) return;
       setImageError(
         err instanceof ImagePrepError
           ? err.message
@@ -107,16 +118,19 @@ export default function DigitalMenuStudio({ cafeName }: { cafeName: string }) {
       );
       track({ name: "photo_upload", props: { outcome: "rejected" } });
     } finally {
-      setPreparing(false);
+      if (seq === uploadSeq.current) setPreparing(false);
     }
   }, []);
 
   const removePhoto = useCallback(() => {
+    // Invalidate anything still decoding, so it can't re-attach itself.
+    uploadSeq.current += 1;
     setImage((previous) => {
       releaseImage(previous);
       return null;
     });
     setImageError(null);
+    setPreparing(false);
     setStatus("idle");
     setMenu(null);
     setError(null);
