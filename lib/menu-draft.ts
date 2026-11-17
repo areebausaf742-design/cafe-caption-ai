@@ -83,6 +83,25 @@ export function renameSection(
   );
 }
 
+/**
+ * The café name is the one field the publish route refuses without: it becomes
+ * the menu page's title, the card's heading and the first line of every
+ * WhatsApp order. Two characters after trimming is the same rule
+ * `validateMenu` applies, so the studio can say it before the request is sent.
+ */
+export const MIN_CAFE_NAME = 2;
+
+export function cafeNameProblem(cafeName: string): string | null {
+  const clean = cafeName.trim();
+  if (clean.length === 0) {
+    return "Add your café's name — it goes on the menu page, the card and the WhatsApp order.";
+  }
+  if (clean.length < MIN_CAFE_NAME) {
+    return "A name needs at least 2 characters.";
+  }
+  return null;
+}
+
 export interface DraftCheck {
   total: number;
   /** Row indices the API would cut or drop as they stand. */

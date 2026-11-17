@@ -979,7 +979,7 @@ export default function CaptionStudio() {
           animate={tab === "menu" ? PANEL_VISIBLE : PANEL_HIDDEN}
           transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
         >
-          <DigitalMenuStudio cafeName={cafeName} />
+          <DigitalMenuStudio cafeName={cafeName} onCafeName={setCafeName} />
         </m.div>
       )}
 
