@@ -15,6 +15,8 @@
  * JSON schema that forces a valid response, and a parser that turns the model's
  * payload into typed, normalised data. The route stays a transport concern.
  */
+import "server-only";
+
 import { SchemaType } from "@google/generative-ai";
 
 import {
@@ -32,6 +34,18 @@ import {
   type StarRating,
   type Tone,
 } from "@/lib/types";
+
+/**
+ * Neutralise the quote fence our prompts use around untrusted text.
+ *
+ * Every user-supplied string (description, review, topic) is wrapped in
+ * `"""…"""`. Without this, a description containing `"""` closes the fence and
+ * everything after it reads as instruction rather than content — the classic
+ * prompt-injection setup.
+ */
+function fenced(text: string): string {
+  return `"""${text.replace(/"""/g, "'''")}"""`;
+}
 
 /* -------------------------------------------------------------------------- */
 /*  SHARED PIECES                                                             */
@@ -228,13 +242,13 @@ export function captionsSpec(input: CaptionsInput): ToolSpec<Caption[]> {
         "Start by silently noting what is actually in the frame: the food or drink, how it is served, the light, the setting, the mood. Then write captions about THAT.",
         "",
         input.description
-          ? `The owner added this note — treat it as extra context or a detail to emphasise: """${input.description}"""`
+          ? `The owner added this note — treat it as extra context or a detail to emphasise: ${fenced(input.description)}`
           : "The owner added no note, so the photo alone is your source. Keep it general enough to stay true to the image.",
       ]
     : [
         "Write Instagram captions and hashtags for the cafe photo described below.",
         "",
-        `Photo description: """${input.description ?? ""}"""`,
+        `Photo description: ${fenced(input.description ?? "")}`,
       ];
 
   const prompt = [
@@ -418,7 +432,7 @@ export function reviewSpec(input: ReviewInput): ToolSpec<ReviewReply[]> {
     "Write the owner's public reply options for this Google review.",
     "",
     "Review:",
-    `"""${input.review}"""`,
+    fenced(input.review),
     "",
     `Star rating given: ${ratingLine}`,
     "",
@@ -600,7 +614,7 @@ export function googlePostSpec(input: GooglePostInput): ToolSpec<GooglePost> {
   const prompt = [
     "Write one Google Business Profile post for this café.",
     "",
-    `What the post is about: """${input.topic}"""`,
+    `What the post is about: ${fenced(input.topic)}`,
     "",
     ...(() => {
       const details = cafeDetails(input);

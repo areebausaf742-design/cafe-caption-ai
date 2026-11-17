@@ -63,6 +63,19 @@ export async function requestGeneration(
       };
     }
 
+    // A 200 with an empty or non-JSON body (a proxy error page, a truncated
+    // response) parses to null. Callers read `.tool` immediately, so handing
+    // that back as success is an uncaught TypeError in the tab.
+    if (!data || typeof data !== "object" || Array.isArray(data) || !("tool" in data)) {
+      return {
+        ok: false,
+        error: {
+          message: "The server sent back something unexpected. Please try again.",
+          status: response.status,
+        },
+      };
+    }
+
     return { ok: true, data: data as GenerateResponse };
   } catch (error) {
     const aborted = error instanceof DOMException && error.name === "AbortError";
