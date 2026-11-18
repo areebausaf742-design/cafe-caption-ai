@@ -49,6 +49,12 @@ import type { MenuItem } from "@/lib/types";
  * pretending otherwise.
  */
 
+/**
+ * Operator switch. Off by default: cafés never see a file format or a URL. Set
+ * NEXT_PUBLIC_DISH_MANUAL_MODEL=1 to reveal plain GLB fields for demos.
+ */
+const MANUAL_MODELS = process.env.NEXT_PUBLIC_DISH_MANUAL_MODEL === "1";
+
 /** Same panel the homepage uses, fetched only when it's actually on screen. */
 const DishStudio = dynamic(() => import("@/components/menu/DishStudio"), {
   ssr: false,
@@ -577,6 +583,7 @@ export default function MenuEditor({ slug }: { slug: string }) {
         <DishStudio
           variant="full"
           items={draft.items}
+          manualModels={MANUAL_MODELS}
           onApplyDetails={applyDetails}
           onSetModel={attachModel}
           onClearDetails={clearDetails}

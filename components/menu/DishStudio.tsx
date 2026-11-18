@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Camera,
   Check,
   ChevronDown,
+  ImageIcon,
   Loader2,
+  RefreshCw,
   Rotate3d,
   Sparkles,
   Trash2,
@@ -25,30 +27,30 @@ import {
   recommendations,
 } from "@/lib/dish";
 import { MAX_CATEGORY, MAX_ITEM_NAME } from "@/lib/menu";
-import { requestDishVision } from "@/lib/studio-client";
+import { requestDishModel, requestDishVision } from "@/lib/studio-client";
 import type { DishModel, MenuItem } from "@/lib/types";
 
 /**
- * The owner's side of the 3D menu: read a photo, correct the words, attach a
- * model.
+ * The owner's side of the 3D menu: one food photo, a line of copy, a model.
  *
  * Two shapes, one component: `compact` sits in the 248px column beside the menu
  * preview on the homepage, `full` is the card in the published-menu editor,
  * where an owner comes back weeks later to change one dish.
  *
- * Three rules shape every line here:
+ * The rules that shape every line here:
  *
- *  1. **Nothing is auto-saved.** The AI's reading of a photo lands in local
- *     fields, marked as a suggestion, and only reaches the menu when the owner
- *     presses Save. A wrong dish name published silently is exactly the failure
- *     this product exists to prevent.
- *  2. **The price is not here.** No field on this panel can reach it — the
- *     suggestion path (`applyDishSuggestion`) writes name, section and copy
- *     only. An owner can change a price on the row above, deliberately.
- *  3. **We do not generate 3D.** Every hosted image-to-3D service bills per
- *     model, so a model has to come from somewhere real: the owner's own GLB.
- *     The panel says where real models come from instead of implying a button
- *     exists that would quietly cost money.
+ *  1. **One photo, two things it can do.** Read the words, or build a model.
+ *     The owner picks a photo once and never sees a file format, a bucket, or a
+ *     URL.
+ *  2. **Nothing is invented.** A model appears only when a real mesh came back
+ *     and was stored; otherwise the panel says what went wrong and offers a
+ *     retry. There are no placeholder meshes and no fake progress.
+ *  3. **Nothing is auto-saved.** A reading lands in local fields; a model lands
+ *     in the draft. Both wait for the owner's Save.
+ *  4. **The price is not here.** No control on this panel can reach it.
+ *
+ * `manualModels` is the operator's escape hatch — it reveals plain GLB/poster
+ * fields for demos and catalogue shots. It is off for cafés.
  */
 
 type Suggestion = {
@@ -56,6 +58,14 @@ type Suggestion = {
   category: string;
   description: string;
   ingredients: string;
+};
+
+type Photo = {
+  base64: string;
+  mimeType: string;
+  previewUrl: string;
+  name: string;
+  kb: number;
 };
 
 const EMPTY: Suggestion = { name: "", category: "", description: "", ingredients: "" };
@@ -66,6 +76,7 @@ export default function DishStudio({
   onSetModel,
   onClearDetails,
   variant = "compact",
+  manualModels = false,
 }: {
   items: MenuItem[];
   /** Writes name/section/description/ingredients. Never the price. */
@@ -77,6 +88,8 @@ export default function DishStudio({
   onClearDetails: (index: number) => void;
   /** `full` is the published-menu editor; `compact` is the homepage sidebar. */
   variant?: "compact" | "full";
+  /** Operator-only: show the plain GLB fields. Off for café owners. */
+  manualModels?: boolean;
 }) {
   const full = variant === "full";
 
@@ -86,25 +99,43 @@ export default function DishStudio({
 
   const [fields, setFields] = useState<Suggestion>(EMPTY);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   const [fromAi, setFromAi] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genSeconds, setGenSeconds] = useState(0);
+  const [genError, setGenError] = useState<{ message: string; hint?: string } | null>(null);
+  const [genNote, setGenNote] = useState<string | null>(null);
+  const [preview, setPreview] = useState(false);
 
+  // Operator-only fields.
   const [glb, setGlb] = useState("");
   const [poster, setPoster] = useState("");
   const [by, setBy] = useState("");
   const [modelError, setModelError] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const photoUrl = useRef<string | null>(null);
 
   const withModel = useMemo(() => modelCount(items), [items]);
   const withCopy = useMemo(() => items.filter((row) => hasDish(row)).length, [items]);
   const share = items.length ? Math.round((withModel / items.length) * 100) : 0;
 
+  const forgetPhoto = useCallback(() => {
+    if (photoUrl.current) {
+      URL.revokeObjectURL(photoUrl.current);
+      photoUrl.current = null;
+    }
+    setPhoto(null);
+  }, []);
+
+  useEffect(() => () => forgetPhoto(), [forgetPhoto]);
+
   // Load the selected row's stored words once per row, so switching dishes never
-  // shows the previous dish's description in the box.
+  // shows the previous dish's description — or its photo — in the panel.
   const rowKey = item ? `${index}:${item.name}:${item.price}` : "none";
   if (item && loadedFor !== rowKey) {
     setLoadedFor(rowKey);
@@ -121,25 +152,64 @@ export default function DishStudio({
     setModelError(null);
     setFromAi(null);
     setSaved(false);
+    setGenError(null);
+    setGenNote(null);
+    setGenerating(false);
+    if (photoUrl.current) {
+      URL.revokeObjectURL(photoUrl.current);
+      photoUrl.current = null;
+    }
+    setPhoto(null);
   }
 
-  const readPhoto = useCallback(async (file: File) => {
+  // An honest clock: the number shown is real elapsed time, not a progress bar
+  // guessing at a GPU queue.
+  useEffect(() => {
+    if (!generating) return;
+    const started = Date.now();
+    setGenSeconds(0);
+    const id = window.setInterval(() => {
+      setGenSeconds(Math.round((Date.now() - started) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [generating]);
+
+  const choosePhoto = useCallback(
+    async (file: File) => {
+      setPreparingPhoto(true);
+      setReadError(null);
+      setGenError(null);
+      setGenNote(null);
+
+      const prepared = await prepareImage(file).catch(() => null);
+      setPreparingPhoto(false);
+
+      if (!prepared) {
+        setReadError("That photo couldn't be read. A JPEG or PNG under 10 MB works best.");
+        return;
+      }
+
+      if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
+      photoUrl.current = prepared.previewUrl;
+
+      setPhoto({
+        base64: prepared.base64,
+        mimeType: prepared.mimeType,
+        previewUrl: prepared.previewUrl,
+        name: prepared.fileName,
+        kb: Math.round(prepared.bytes / 1024),
+      });
+    },
+    [],
+  );
+
+  const readWords = useCallback(async () => {
+    if (!photo) return;
     setReading(true);
     setReadError(null);
     setSaved(false);
 
-    const prepared = await prepareImage(file).catch(() => null);
-    if (!prepared) {
-      setReading(false);
-      setReadError("That photo couldn't be read. A JPEG or PNG under 10 MB works best.");
-      return;
-    }
-
-    const outcome = await requestDishVision({
-      mimeType: prepared.mimeType,
-      data: prepared.base64,
-    });
-
+    const outcome = await requestDishVision({ mimeType: photo.mimeType, data: photo.base64 });
     setReading(false);
 
     if (!outcome.ok) {
@@ -154,8 +224,29 @@ export default function DishStudio({
       description: dish.description,
       ingredients: dish.ingredients.join(", "),
     });
-    setFromAi(dish.presentation ? `${dish.presentation}` : outcome.model);
-  }, []);
+    setFromAi(dish.presentation ? dish.presentation : "the photo");
+  }, [photo]);
+
+  const buildModel = useCallback(async () => {
+    if (!photo || generating) return;
+    setGenerating(true);
+    setGenError(null);
+    setGenNote(null);
+    setModelError(null);
+
+    const outcome = await requestDishModel({ mimeType: photo.mimeType, data: photo.base64 });
+    setGenerating(false);
+
+    if (!outcome.ok) {
+      setGenError({ message: outcome.error.message, hint: outcome.error.hint });
+      return;
+    }
+
+    onSetModel(index, outcome.model);
+    setGenNote(
+      `Model built from your photo in ${outcome.meta.seconds}s on a ${outcome.meta.via}. It's in this draft — Save changes to put it on the menu.`,
+    );
+  }, [generating, index, onSetModel, photo]);
 
   const saveDetails = useCallback(() => {
     if (!item) return;
@@ -180,7 +271,7 @@ export default function DishStudio({
     setSaved(false);
   }, [index, item, onClearDetails]);
 
-  const saveModel = useCallback(() => {
+  const saveManualModel = useCallback(() => {
     if (!item) return;
     const url = glb.trim();
 
@@ -189,9 +280,7 @@ export default function DishStudio({
       return;
     }
     if (!isAssetUrl(url, "model")) {
-      setModelError(
-        "That isn't a model URL. It needs to be an https link ending in .glb or .gltf.",
-      );
+      setModelError("That isn't a model URL. It needs to be an https link ending in .glb or .gltf.");
       return;
     }
     if (poster.trim() && !isAssetUrl(poster.trim(), "image")) {
@@ -214,19 +303,13 @@ export default function DishStudio({
     setPoster("");
     setBy("");
     setModelError(null);
+    setGenError(null);
+    setGenNote("Model removed from this draft. Save changes to take it off the menu.");
     setPreview(false);
   }, [index, item, onSetModel]);
 
-  const previewModel: DishModel | null =
-    glb.trim() && isAssetUrl(glb.trim(), "model")
-      ? {
-          glb: glb.trim(),
-          ...(poster.trim() && isAssetUrl(poster.trim(), "image") ? { poster: poster.trim() } : {}),
-        }
-      : (item?.model ?? null);
-
-  const posterOk = poster.trim() && isAssetUrl(poster.trim(), "image");
-  const modelInDraft = Boolean(item && item.model?.glb === glb.trim() && glb.trim());
+  const previewModel: DishModel | null = item?.model ?? null;
+  const posterOk = manualModels && poster.trim() && isAssetUrl(poster.trim(), "image");
   const chips = fields.ingredients
     .split(",")
     .map((entry) => entry.trim())
@@ -254,13 +337,15 @@ export default function DishStudio({
     ? "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/95 px-2.5 py-2 text-[12.5px] text-espresso-900 outline-none placeholder:text-espresso-400/70 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25"
     : "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/90 px-2 py-1.5 text-[11.5px] text-espresso-900 outline-none placeholder:text-espresso-400/70 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25";
   const primaryButton = full
-    ? "tap inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-espresso-900 px-3 py-2 text-[11.5px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
-    : "tap inline-flex items-center gap-1 rounded-lg bg-espresso-900 px-2.5 py-1.5 text-[10.5px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45";
+    ? "tap inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-espresso-900 px-3 py-2 text-[12px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
+    : "tap inline-flex items-center gap-1 rounded-lg bg-espresso-900 px-2.5 py-1.5 text-[10.5px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50";
   const quietButton = full
-    ? "tap inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-espresso-900/[0.14] px-3 py-2 text-[11.5px] font-semibold text-espresso-600 hover:border-espresso-900/30 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
-    : "tap inline-flex items-center gap-1 rounded-lg border border-espresso-900/[0.14] px-2 py-1.5 text-[10.5px] font-semibold text-espresso-600 hover:border-espresso-900/30 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45";
+    ? "tap inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-espresso-900/[0.14] px-3 py-2 text-[12px] font-semibold text-espresso-600 hover:border-espresso-900/30 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
+    : "tap inline-flex items-center gap-1 rounded-lg border border-espresso-900/[0.14] px-2 py-1.5 text-[10.5px] font-semibold text-espresso-600 hover:border-espresso-900/30 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50";
 
-  const wordsPanel = (
+  /* ------------------------------- the photo ----------------------------- */
+
+  const photoPanel = (
     <div
       className={
         full
@@ -268,47 +353,136 @@ export default function DishStudio({
           : "mt-3 rounded-lg border border-espresso-900/[0.08] bg-cream-50/70 p-2.5"
       }
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[10.5px] font-semibold text-espresso-700">
           <Camera className="h-3 w-3 text-caramel-600" aria-hidden />
-          The words
+          One photo of this dish
         </p>
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          disabled={reading}
-          className="tap inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2 py-1 text-[10px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
+          disabled={preparingPhoto || generating}
+          className="tap inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2.5 py-1 text-[10.5px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
         >
-          {reading ? (
+          {preparingPhoto ? (
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
           ) : (
             <Upload className="h-3 w-3" aria-hidden />
           )}
-          {reading ? "Reading…" : "Read a photo"}
+          {photo ? "Change" : preparingPhoto ? "Preparing…" : "Choose photo"}
         </button>
         <input
           ref={fileRef}
           type="file"
           accept="image/jpeg,image/png,image/webp"
           className="sr-only"
-          aria-label={`Read a photo of ${item.name || "this dish"}`} 
+          aria-label={`Choose a photo of ${item.name || "this dish"}`}
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
-            if (file) void readPhoto(file);
+            if (file) void choosePhoto(file);
           }}
         />
       </div>
 
-      <p className="mt-1 text-[10px] leading-[1.55] text-espresso-500">
-        One dish per photo, in daylight if you can. The photo is read and discarded — never
-        stored, never published.
-      </p>
+      {photo ? (
+        <div className="mt-2 flex items-start gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={photo.previewUrl}
+            alt={`Photo of ${fields.name || item.name}`}
+            width={64}
+            height={64}
+            className="h-16 w-16 shrink-0 rounded-lg border border-espresso-900/[0.08] object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[10.5px] font-medium text-espresso-700">{photo.name}</p>
+            <p className="text-[9.5px] text-espresso-400">{photo.kb} KB after compression</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => void readWords()}
+                disabled={reading || generating}
+                className={quietButton}
+              >
+                {reading ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                ) : (
+                  <Sparkles className="h-3 w-3" aria-hidden />
+                )}
+                {reading ? "Reading…" : "Read the words"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void buildModel()}
+                disabled={generating || reading || preparingPhoto}
+                className={primaryButton}
+              >
+                {generating ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                ) : (
+                  <Rotate3d className="h-3 w-3" aria-hidden />
+                )}
+                {generating
+                  ? `Building 3D… ${genSeconds}s`
+                  : hasModel(item)
+                    ? "Regenerate 3D"
+                    : "Generate 3D model"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-[1.55] text-espresso-500">
+          <ImageIcon className="mt-[1px] h-3 w-3 shrink-0 text-espresso-400" aria-hidden />
+          <span>
+            Pick one photo of the dish on its own — daylight, plain background. The same photo can
+            write the description and build the model. It&apos;s sent for those two jobs and never
+            stored or published.
+          </span>
+        </p>
+      )}
 
-      {reading && (
+      {preparingPhoto && (
         <p role="status" className="mt-1.5 flex items-center gap-1.5 text-[10px] text-espresso-500">
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-          Looking at the photo…
+          Shrinking the photo in your browser…
+        </p>
+      )}
+
+      {generating && (
+        <p role="status" className="mt-2 text-[10px] leading-[1.55] text-espresso-600">
+          Building real geometry from the photo. Free GPUs are shared, so this can take a minute or
+          two and sometimes waits in a queue. Nothing is charged, and nothing is saved until a model
+          actually comes back.
+        </p>
+      )}
+
+      {genError && (
+        <div role="alert" className="mt-2 rounded-lg bg-[#FBEEE8] px-2.5 py-2">
+          <p className="flex items-start gap-1.5 text-[10.5px] leading-[1.55] text-[#7A3520]">
+            <AlertCircle className="mt-[1px] h-3 w-3 shrink-0" aria-hidden />
+            <span>{genError.message}</span>
+          </p>
+          {genError.hint && (
+            <p className="mt-1 pl-[18px] text-[10px] leading-[1.5] text-[#93604B]">{genError.hint}</p>
+          )}
+          {photo && (
+            <button type="button" onClick={() => void buildModel()} className={`${quietButton} mt-1.5`}>
+              <RefreshCw className="h-3 w-3" aria-hidden />
+              Try again
+            </button>
+          )}
+        </div>
+      )}
+
+      {genNote && (
+        <p
+          role="status"
+          className="mt-2 flex items-start gap-1.5 rounded-lg bg-sage-500/10 px-2.5 py-2 text-[10.5px] leading-[1.55] text-espresso-700"
+        >
+          <Check className="mt-[1px] h-3 w-3 shrink-0 text-sage-500" aria-hidden />
+          <span>{genNote}</span>
         </p>
       )}
 
@@ -321,19 +495,29 @@ export default function DishStudio({
           <span>{readError}</span>
         </p>
       )}
+    </div>
+  );
 
-      {fromAi && !reading && (
-        <p className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-[1.5] text-espresso-600">
-          <Sparkles className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600" aria-hidden />
-          <span>
-            Suggestion only — check it, then save. Words that claim an allergen or a diet are
-            dropped before they reach this box.
-            {fromAi !== "model" ? ` Seen: ${fromAi}.` : ""}
+  /* ------------------------------ the words ------------------------------ */
+
+  const wordsPanel = (
+    <div
+      className={
+        full
+          ? "rounded-xl border border-espresso-900/[0.08] bg-white/70 p-3 sm:p-3.5"
+          : "mt-3 rounded-lg border border-espresso-900/[0.08] bg-white/70 p-2.5"
+      }
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10.5px] font-semibold text-espresso-700">The words</p>
+        {fromAi && (
+          <span className="rounded-full bg-caramel-50 px-2 py-0.5 text-[9px] font-semibold text-caramel-600">
+            from the photo — check it
           </span>
-        </p>
-      )}
+        )}
+      </div>
 
-      <div className={`mt-2.5 grid gap-2 ${full ? "sm:grid-cols-2" : "sm:grid-cols-2"}`}>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <label className="block">
           <span className={fieldLabel}>Dish name</span>
           <input
@@ -427,18 +611,20 @@ export default function DishStudio({
     </div>
   );
 
+  /* ------------------------------- the model ----------------------------- */
+
   const modelPanel = (
     <div
       className={
         full
-          ? "rounded-xl border border-espresso-900/[0.08] bg-cream-50/60 p-3 sm:p-3.5"
-          : "mt-3 rounded-lg border border-espresso-900/[0.08] bg-cream-50/70 p-2.5"
+          ? "rounded-xl border border-espresso-900/[0.08] bg-white/70 p-3 sm:p-3.5"
+          : "mt-3 rounded-lg border border-espresso-900/[0.08] bg-white/70 p-2.5"
       }
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[10.5px] font-semibold text-espresso-700">
           <Rotate3d className="h-3 w-3 text-caramel-600" aria-hidden />
-          The model
+          3D model
         </p>
         <span
           className={`rounded-full px-2 py-0.5 text-[9.5px] font-semibold ${
@@ -447,138 +633,169 @@ export default function DishStudio({
               : "border border-espresso-900/[0.1] text-espresso-400"
           }`}
         >
-          {modelInDraft ? "In this draft" : hasModel(item) ? "Live once saved" : "Not set"}
+          {hasModel(item) ? "Attached to this dish" : "Not built yet"}
         </span>
       </div>
 
-      <div className="mt-2 grid gap-2">
-        <label className="block">
-          <span className={fieldLabel}>GLB URL</span>
-          <input
-            value={glb}
-            maxLength={DISH_LIMITS.url}
-            placeholder="https://cdn.example.com/masala-chai.glb"
-            inputMode="url"
-            onChange={(event) => {
-              setGlb(event.target.value);
-              setModelError(null);
-            }}
-            className={inputClass}
-          />
-        </label>
+      {hasModel(item) ? (
+        <>
+          <p className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500">
+            Customers see a &ldquo;See it in 3D&rdquo; button on this dish, and only this dish — a
+            real mesh they can turn, pinch and open fullscreen
+            {item.model?.by ? ` (built with ${item.model.by})` : ""}.
+          </p>
 
-        <div className={`grid gap-2 ${full ? "sm:grid-cols-2" : "sm:grid-cols-2"}`}>
-          <label className="block">
-            <span className={fieldLabel}>Poster (optional)</span>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {previewModel && (
+              <button type="button" onClick={() => setPreview(true)} className={primaryButton}>
+                <Rotate3d className="h-3 w-3" aria-hidden />
+                Open the viewer
+              </button>
+            )}
+            {photo && (
+              <button
+                type="button"
+                onClick={() => void buildModel()}
+                disabled={generating}
+                className={quietButton}
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden />
+                {generating ? "Rebuilding…" : "Regenerate"}
+              </button>
+            )}
+            <button type="button" onClick={removeModel} className={quietButton}>
+              <Trash2 className="h-3 w-3" aria-hidden />
+              Remove model
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500">
+            {photo
+              ? "Press Generate 3D model above. The mesh is built from your photo on a free shared GPU."
+              : "A model starts with one photo of the dish — that photo is the only input."}
+          </p>
+          {!photo && (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={preparingPhoto || generating}
+              className={`${quietButton} mt-2`}
+            >
+              <Camera className="h-3 w-3" aria-hidden />
+              Add a photo to build the model
+            </button>
+          )}
+          <ol className="mt-1.5 space-y-0.5 pl-3.5 text-[10px] leading-[1.55] text-espresso-500">
+            <li className="list-decimal">One photo of the dish, on its own.</li>
+            <li className="list-decimal">Generate — a minute or two on a free GPU.</li>
+            <li className="list-decimal">Save changes to put it on the menu.</li>
+          </ol>
+        </>
+      )}
+
+      {manualModels && (
+        <details className="group mt-2.5 rounded-lg bg-cream-50/80 p-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-espresso-400 hover:text-espresso-700 [&::-webkit-details-marker]:hidden">
+            <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
+            Operator: attach a file directly
+          </summary>
+
+          <label className="mt-2 block">
+            <span className={fieldLabel}>GLB URL</span>
             <input
-              value={poster}
+              value={glb}
               maxLength={DISH_LIMITS.url}
-              placeholder="https://…/chai.jpg"
+              placeholder="https://cdn.example.com/masala-chai.glb"
               inputMode="url"
               onChange={(event) => {
-                setPoster(event.target.value);
+                setGlb(event.target.value);
                 setModelError(null);
               }}
               className={inputClass}
             />
           </label>
-          <label className="block">
-            <span className={fieldLabel}>Made with (optional)</span>
-            <input
-              value={by}
-              maxLength={DISH_LIMITS.by}
-              placeholder="trellis-2"
-              onChange={(event) => setBy(event.target.value)}
-              className={inputClass}
-            />
-          </label>
-        </div>
-      </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className={fieldLabel}>Poster (optional)</span>
+              <input
+                value={poster}
+                maxLength={DISH_LIMITS.url}
+                placeholder="https://…/chai.jpg"
+                inputMode="url"
+                onChange={(event) => {
+                  setPoster(event.target.value);
+                  setModelError(null);
+                }}
+                className={inputClass}
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabel}>Made with (optional)</span>
+              <input
+                value={by}
+                maxLength={DISH_LIMITS.by}
+                placeholder="trellis-2"
+                onChange={(event) => setBy(event.target.value)}
+                className={inputClass}
+              />
+            </label>
+          </div>
 
-      {posterOk && (
-        <div className="mt-2 flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={poster.trim()}
-            alt=""
-            width={40}
-            height={40}
-            loading="lazy"
-            className="h-10 w-10 rounded-lg border border-espresso-900/[0.08] object-cover"
-          />
-          <p className="text-[9.5px] leading-[1.5] text-espresso-500">
-            Shown if the model can&apos;t load — a still beats a blank box on a phone.
-          </p>
-        </div>
-      )}
+          {posterOk && (
+            <div className="mt-2 flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={poster.trim()}
+                alt=""
+                width={40}
+                height={40}
+                loading="lazy"
+                className="h-10 w-10 rounded-lg border border-espresso-900/[0.08] object-cover"
+              />
+              <p className="text-[9.5px] leading-[1.5] text-espresso-500">
+                Shown if the model can&apos;t load — a still beats a blank box.
+              </p>
+            </div>
+          )}
 
-      {modelError && (
-        <p
-          role="alert"
-          className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-[1.5] text-espresso-700"
-        >
-          <AlertCircle className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600" aria-hidden />
-          <span>{modelError}</span>
-        </p>
-      )}
+          {modelError && (
+            <p
+              role="alert"
+              className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-[1.5] text-espresso-700"
+            >
+              <AlertCircle className="mt-[1px] h-3 w-3 shrink-0 text-caramel-600" aria-hidden />
+              <span>{modelError}</span>
+            </p>
+          )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <button type="button" onClick={saveModel} className={primaryButton}>
-          <Rotate3d className="h-3 w-3" aria-hidden />
-          {hasModel(item) ? "Update 3D" : "Enable 3D"}
-        </button>
-
-        {previewModel && (
-          <button type="button" onClick={() => setPreview(true)} className={quietButton}>
-            Preview 3D
+          <button type="button" onClick={saveManualModel} className={`${primaryButton} mt-2`}>
+            <Rotate3d className="h-3 w-3" aria-hidden />
+            {hasModel(item) ? "Update from URL" : "Attach from URL"}
           </button>
-        )}
-
-        {hasModel(item) && (
-          <button type="button" onClick={removeModel} className={quietButton}>
-            <Trash2 className="h-3 w-3" aria-hidden />
-            Remove model
-          </button>
-        )}
-      </div>
-
-      {hasModel(item) && (
-        <p className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500">
-          Customers see a &ldquo;See it in 3D&rdquo; button on this dish, and only this dish.
-        </p>
+        </details>
       )}
 
       <details className="group mt-2">
         <summary className="tap flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold text-espresso-600 hover:text-espresso-900 [&::-webkit-details-marker]:hidden">
-          <ChevronDown
-            className="h-3 w-3 transition-transform group-open:rotate-180"
-            aria-hidden
-          />
-          Where do I get a GLB?
+          <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
+          How free 3D works here
         </summary>
         <div className="mt-1.5 space-y-1.5 text-[10px] leading-[1.55] text-espresso-500">
           <p>
-            Nothing here generates geometry, and no hosted image-to-3D API is free — they all bill
-            per model. The honest routes, all of which you run yourself and then upload the file:
+            Your photo goes to an open-source model (TripoSR, MIT) running on a free shared GPU. It
+            returns a real mesh with depth — not a picture laid flat — which is why it can be turned
+            and lit.
           </p>
-          <ul className="space-y-1 pl-3">
-            <li>
-              <strong className="font-semibold text-espresso-700">TRELLIS.2</strong> — MIT, best
-              quality, wants about 24 GB of video memory.
-            </li>
-            <li>
-              <strong className="font-semibold text-espresso-700">TripoSR</strong> — MIT, runs in
-              6–8 GB, a second per dish.
-            </li>
-            <li>
-              <strong className="font-semibold text-espresso-700">Stable Fast 3D</strong> — free
-              under $1M revenue, textured and UV-unwrapped.
-            </li>
-          </ul>
           <p>
-            Host the exported .glb anywhere that serves it over https with permissive CORS — a
-            Supabase bucket, Cloudflare R2, or the café&apos;s own site. Compressing it with
-            gltfpack or Draco makes it load in a fraction of the time.
+            Free GPU time is small: a few models a day for the whole app, shared with everyone else.
+            If the queue is full, the panel says so and you can try again later. Nothing is charged,
+            ever, and nothing is generated unless a real model comes back.
+          </p>
+          <p>
+            One photo can&apos;t show what a dish looks like from behind, so the back of the mesh is
+            the model&apos;s best guess. A plain background with one dish gives the best result.
           </p>
         </div>
       </details>
@@ -612,7 +829,7 @@ export default function DishStudio({
 
       {full && (
         <p className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500">
-          Pick a dish, give it a line of copy and a model. Nothing here touches a price, and
+          Pick a dish, give it a photo, and press Generate. Nothing here touches a price, and
           nothing goes live until you press <strong className="font-semibold">Save changes</strong>.
         </p>
       )}
@@ -652,14 +869,18 @@ export default function DishStudio({
         })}
       </div>
 
-      {/* the two halves -------------------------------------------------- */}
+      {/* the halves ------------------------------------------------------ */}
       {full ? (
-        <div className="mt-2 grid gap-2 lg:grid-cols-2">
-          {wordsPanel}
-          {modelPanel}
-        </div>
+        <>
+          <div className="mt-2">{photoPanel}</div>
+          <div className="mt-2 grid gap-2 lg:grid-cols-2">
+            {wordsPanel}
+            {modelPanel}
+          </div>
+        </>
       ) : (
         <>
+          {photoPanel}
           {wordsPanel}
           {modelPanel}
         </>

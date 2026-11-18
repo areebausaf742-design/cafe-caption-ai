@@ -8,7 +8,7 @@
  */
 import type { DishReading } from "@/lib/dish";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
-import type { ApiError, GenerateRequest, GenerateResponse } from "@/lib/types";
+import type { ApiError, DishModel, GenerateRequest, GenerateResponse } from "@/lib/types";
 
 export interface StudioError {
   message: string;
@@ -240,6 +240,95 @@ export async function requestDishVision(
         message: aborted
           ? "Reading the photo took too long. Type the dish in — nothing is lost."
           : "Couldn't reach the dish reader. Type the dish in instead.",
+        status: 0,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  3D models                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export type DishModelOutcome =
+  | { ok: true; model: DishModel; meta: { provider: string; via: string; seconds: number } }
+  | { ok: false; error: StudioError };
+
+/**
+ * Ask for a model from a food photo.
+ *
+ * This is the slowest thing in the product: a free GPU Space may be asleep, and
+ * a generation passes through a queue before the mesh exists. Two and a half
+ * minutes covers a cold start plus a TripoSR pass; past that the server's own
+ * budget has already given up, and saying so beats spinning forever.
+ */
+export async function requestDishModel(
+  photo: { mimeType: string; data: string },
+): Promise<DishModelOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 255_000);
+
+  try {
+    const response = await fetch("/api/dish-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: photo }),
+      signal: controller.signal,
+    });
+
+    const data: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const apiError = data as ApiError | null;
+      return {
+        ok: false,
+        error: {
+          message: apiError?.error ?? `The model couldn't be generated (${response.status}).`,
+          hint: apiError?.hint,
+          status: response.status,
+          code: apiError?.code,
+          retryAfter: apiError?.retryAfter,
+        },
+      };
+    }
+
+    const payload = data as {
+      model?: { glb?: unknown; by?: unknown };
+      meta?: { provider?: string; via?: string; seconds?: number };
+    } | null;
+
+    const glb = typeof payload?.model?.glb === "string" ? payload.model.glb : "";
+    if (!glb) {
+      return {
+        ok: false,
+        error: { message: "The generator sent back no model. Nothing was changed.", status: response.status },
+      };
+    }
+
+    return {
+      ok: true,
+      model: {
+        glb,
+        ...(typeof payload?.model?.by === "string" && payload.model.by
+          ? { by: payload.model.by }
+          : {}),
+      },
+      meta: {
+        provider: payload?.meta?.provider ?? "triposr",
+        via: payload?.meta?.via ?? "free ZeroGPU",
+        seconds: payload?.meta?.seconds ?? 0,
+      },
+    };
+  } catch (error) {
+    const aborted = error instanceof DOMException && error.name === "AbortError";
+    return {
+      ok: false,
+      error: {
+        message: aborted
+          ? "That took longer than a free GPU can hold a job. Nothing was saved — try again, or later."
+          : "Couldn't reach the generator. Nothing was changed.",
         status: 0,
       },
     };
