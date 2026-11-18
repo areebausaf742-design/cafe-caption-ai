@@ -638,6 +638,23 @@ poster and a credit line, and previews the result in the real viewer before it
 touches the menu. `DISH_LIMITS` caps description at 320 characters, ingredients
 at 8 × 40, and URLs at 400.
 
+It ships in two places, from one component:
+
+- **`variant="compact"`** — the 248px column beside the menu preview on the
+  homepage, for a café building its menu for the first time.
+- **`variant="full"`** — a card in the owner editor at `/menu/[slug]/edit`,
+  between Items and the save bar. This is where an owner comes back weeks later,
+  so it gets the whole story: a coverage bar, per-dish chips that show which
+  dishes already have a model, a poster thumbnail, and copy that says outright
+  that nothing goes live until **Save changes**.
+
+The editor wires it to the same three price-blind writers as the homepage
+(`applyDishSuggestion`, `setItemDish`, `setItemModel`), so a model added from the
+edit link round-trips through `PATCH /api/menus/[slug]` exactly like one added
+during publishing — verified end to end against a mock database: model, poster,
+credit and copy survive the round trip, an `http://` model is stripped, and both
+prices come back byte-identical.
+
 #### The generation seam (deliberately unbuilt)
 
 Nothing here generates a mesh, and the UI never implies otherwise. Every hosted
@@ -792,7 +809,7 @@ components/
   menu/MenuCard.tsx        # menu layout, shared by studio, demo and live menus
                            #   (takes an optional `edit` prop to become inputs)
   menu/MenuQr.tsx          # the QR island (demo page, editor, any menu URL)
-  menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
+  menu/MenuEditor.tsx      # the editor: fields, item rows, 3D panel, save, editor link
   menu/MenuOrder.tsx       # the cart: steppers, order sheet, wa.me handoff
   menu/MenuLanguages.tsx   # language switcher + card + cart, one island
   menu/DishViewer.tsx      # three.js viewer (lazy; three is an async chunk)

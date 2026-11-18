@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   AlertCircle,
   Check,
@@ -9,10 +10,17 @@ import {
   Languages,
   Loader2,
   Plus,
+  Rotate3d,
   Trash2,
 } from "lucide-react";
 
 import MenuQr from "@/components/menu/MenuQr";
+import { hasModel, modelCount } from "@/lib/dish";
+import {
+  applyDishSuggestion,
+  setItemDish,
+  setItemModel,
+} from "@/lib/menu-draft";
 import {
   MAX_CATEGORY,
   MAX_ITEM_NAME,
@@ -40,6 +48,12 @@ import type { MenuItem } from "@/lib/types";
  * the ability to edit — so the page says so in as many words rather than
  * pretending otherwise.
  */
+
+/** Same panel the homepage uses, fetched only when it's actually on screen. */
+const DishStudio = dynamic(() => import("@/components/menu/DishStudio"), {
+  ssr: false,
+  loading: () => null,
+});
 
 type Phase = "loading" | "ready" | "error";
 
@@ -174,6 +188,39 @@ export default function MenuEditor({ slug }: { slug: string }) {
     });
   }, []);
 
+  /* ------------------------- dishes: words and models -------------------- */
+  // Three writers, all price-blind by construction: the suggestion path moves
+  // name/section/copy, the dish path moves copy, the model path moves a URL.
+
+  const applyDetails = useCallback(
+    (
+      index: number,
+      suggestion: { name: string; category: string; description: string; ingredients: string[] },
+    ) => {
+      setDraft((current) =>
+        current
+          ? { ...current, items: applyDishSuggestion(current.items, index, suggestion) }
+          : current,
+      );
+      setSaveError(null);
+    },
+    [],
+  );
+
+  const clearDetails = useCallback((index: number) => {
+    setDraft((current) =>
+      current ? { ...current, items: setItemDish(current.items, index, null) } : current,
+    );
+    setSaveError(null);
+  }, []);
+
+  const attachModel = useCallback((index: number, model: MenuItem["model"] | null) => {
+    setDraft((current) =>
+      current ? { ...current, items: setItemModel(current.items, index, model ?? null) } : current,
+    );
+    setSaveError(null);
+  }, []);
+
   const removeItem = useCallback((index: number) => {
     setDraft((current) => {
       if (!current) return current;
@@ -181,6 +228,8 @@ export default function MenuEditor({ slug }: { slug: string }) {
     });
     setSaveError(null);
   }, []);
+
+  const withModel = useMemo(() => modelCount(draft?.items ?? []), [draft]);
 
   /* -------------------------------- saving ------------------------------- */
 
@@ -404,8 +453,20 @@ export default function MenuEditor({ slug }: { slug: string }) {
       <div className="card p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3">
           <p className="label">Items</p>
-          <span className="text-[10.5px] tabular-nums text-espresso-400">
-            {draft.items.length} / {MAX_ITEMS}
+          <span className="flex items-center gap-2 text-[10.5px] tabular-nums text-espresso-400">
+            {withModel > 0 && (
+              <a
+                href="#dish-3d"
+                className="inline-flex items-center gap-1 rounded-full bg-cream-50 px-2 py-0.5 text-espresso-600 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40"
+                title="Jump to the dish details and 3D panel"
+              >
+                <Rotate3d className="h-2.5 w-2.5 text-caramel-600" aria-hidden />
+                {withModel} in 3D
+              </a>
+            )}
+            <span>
+              {draft.items.length} / {MAX_ITEMS}
+            </span>
           </span>
         </div>
 
@@ -463,14 +524,24 @@ export default function MenuEditor({ slug }: { slug: string }) {
                 placeholder="Section"
                 onChange={(event) => setItem(index, "category", event.target.value)}
               />
-              <input
-                className="input min-h-[42px] px-2.5 py-1.5 text-[12.5px]"
-                value={item.name}
-                maxLength={MAX_ITEM_NAME}
-                aria-label={`Name for item ${index + 1}`}
-                placeholder="Item name"
-                onChange={(event) => setItem(index, "name", event.target.value)}
-              />
+              <span className="relative">
+                <input
+                  className={`input min-h-[42px] w-full px-2.5 py-1.5 text-[12.5px] ${
+                    hasModel(item) ? "pr-7" : ""
+                  }`}
+                  value={item.name}
+                  maxLength={MAX_ITEM_NAME}
+                  aria-label={`Name for item ${index + 1}`}
+                  placeholder="Item name"
+                  onChange={(event) => setItem(index, "name", event.target.value)}
+                />
+                {hasModel(item) && (
+                  <Rotate3d
+                    className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-caramel-600"
+                    aria-hidden
+                  />
+                )}
+              </span>
               <input
                 className="input min-h-[42px] px-2 py-1.5 text-[12.5px] tabular-nums"
                 value={item.price}
@@ -499,6 +570,17 @@ export default function MenuEditor({ slug }: { slug: string }) {
         >
           <Plus className="h-3.5 w-3.5" /> Add an item
         </button>
+      </div>
+
+      {/* Dish details and 3D -------------------------------------------- */}
+      <div id="dish-3d" className="scroll-mt-24">
+        <DishStudio
+          variant="full"
+          items={draft.items}
+          onApplyDetails={applyDetails}
+          onSetModel={attachModel}
+          onClearDetails={clearDetails}
+        />
       </div>
 
       {/* Save ---------------------------------------------------------- */}
