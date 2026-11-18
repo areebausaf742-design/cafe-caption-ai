@@ -91,6 +91,13 @@ export type AnalyticsEvent =
         language: "en" | "hi" | "hinglish";
       };
     }
+  | {
+      name: "dish_3d_open";
+      props?: {
+        /** Only whether a model was opened — never which dish, never the photo. */
+        had_poster?: boolean;
+      };
+    }
   | { name: "lead_submit"; props: { interest: string } }
   | { name: "cta_click"; props: { location: string; label: string } };
 

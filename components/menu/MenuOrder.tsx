@@ -49,6 +49,7 @@ export default function MenuOrder({
   whatsapp,
   updated,
   language = "en",
+  onInspect,
 }: {
   slug: string;
   cafeName: string;
@@ -58,6 +59,8 @@ export default function MenuOrder({
   updated?: string | null;
   /** What the customer is reading the menu in. Display only — see below. */
   language?: MenuLanguage;
+  /** Set when the page can open the 3D viewer for a dish. */
+  onInspect?: (index: number) => void;
 }) {
   const [quantities, setQuantities] = useState<Quantities>({});
   const [open, setOpen] = useState(false);
@@ -126,6 +129,7 @@ export default function MenuOrder({
         isSample={false}
         updated={updated}
         order={{ quantities, onStep: step }}
+        onInspect={onInspect}
       />
 
       {/* The order sheet — in flow, so nothing is hidden behind an overlay. */}

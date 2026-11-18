@@ -26,7 +26,12 @@ import { rateLimit, withRateHeaders } from "@/lib/rate-limit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BODY_BYTES = 64_000;
+/**
+ * A saved menu is the published menu, so it carries the same worst case: 120
+ * lines, three languages, and dish copy plus two asset URLs where the café
+ * added them. Saving must never be stricter than publishing.
+ */
+const MAX_BODY_BYTES = 512_000;
 
 const READ_LIMIT = { namespace: "menu-edit-read", max: 60, windowMs: 10 * 60 * 1000 };
 const SAVE_LIMIT = { namespace: "menu-edit-save", max: 20, windowMs: 10 * 60 * 1000 };
@@ -107,7 +112,11 @@ export async function PATCH(request: Request, { params }: Params) {
   const declaredBytes = Number(request.headers.get("content-length") ?? "");
   if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
     return withRateHeaders(
-      fail(413, "That menu is too big to save.", "REQUEST_TOO_LARGE"),
+      fail(
+        413,
+        "That menu is too big to save. Very long 3D links or descriptions on many dishes usually push it over.",
+        "REQUEST_TOO_LARGE",
+      ),
       rate,
     );
   }

@@ -6,6 +6,7 @@
  * first), and errors that already read like sentences. Keeping it here means
  * the caption tab and the Local SEO tab can't drift apart.
  */
+import type { DishReading } from "@/lib/dish";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
 import type { ApiError, GenerateRequest, GenerateResponse } from "@/lib/types";
 
@@ -169,6 +170,76 @@ export async function requestTranslations(
         message: aborted
           ? "Translating took too long. Your menu is still here — publish in English, or try again."
           : "Couldn't reach the translator. Your menu is still here.",
+        status: 0,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Dish photos                                                               */
+/* -------------------------------------------------------------------------- */
+
+export type DishVisionOutcome =
+  | { ok: true; dish: DishReading; model: string }
+  | { ok: false; error: StudioError };
+
+/**
+ * Read one food photo.
+ *
+ * The photo travels as base64 for the length of this request and nothing else —
+ * it is never written to storage, never attached to the menu, and never seen by
+ * the published page. A failure here is a normal outcome: the studio falls back
+ * to the fields the owner already has and says why.
+ */
+export async function requestDishVision(
+  photo: { mimeType: string; data: string },
+): Promise<DishVisionOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 50_000);
+
+  try {
+    const response = await fetch("/api/dish-vision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: photo }),
+      signal: controller.signal,
+    });
+
+    const data: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const apiError = data as ApiError | null;
+      return {
+        ok: false,
+        error: {
+          message: apiError?.error ?? `The photo couldn't be read (${response.status}).`,
+          hint: apiError?.hint,
+          status: response.status,
+          code: apiError?.code,
+        },
+      };
+    }
+
+    const payload = data as { dish?: DishReading; meta?: { model?: string } } | null;
+    if (!payload?.dish || typeof payload.dish.name !== "string") {
+      return {
+        ok: false,
+        error: { message: "The reader sent back something unexpected.", status: response.status },
+      };
+    }
+
+    return { ok: true, dish: payload.dish, model: payload.meta?.model ?? "" };
+  } catch (error) {
+    const aborted = error instanceof DOMException && error.name === "AbortError";
+    return {
+      ok: false,
+      error: {
+        message: aborted
+          ? "Reading the photo took too long. Type the dish in — nothing is lost."
+          : "Couldn't reach the dish reader. Type the dish in instead.",
         status: 0,
       },
     };
