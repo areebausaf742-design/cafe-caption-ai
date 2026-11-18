@@ -78,11 +78,15 @@ export default function PrivacyPage() {
               the photo and are never a statement about allergens — ask the café.
             </li>
             <li>
-              <strong>3D models</strong> — a dish model is a file you host
-              yourself. We store its URL and serve a viewer that fetches it from
-              your link, so your host sees the same request any image on your
-              menu would. Nothing is generated on our side and no photo is sent
-              to a 3D service.
+              <strong>3D models</strong> — when you press <em>Generate 3D
+              model</em>, the same food photo is sent once to an open-source
+              image-to-3D model running on a shared, free GPU (a Hugging Face
+              Space) and comes back as a 3D file. We store that model file on our
+              own storage and serve it to customers from there; no photo is kept.
+              The model is built from a single picture, so the back of a dish is
+              the model&rsquo;s best guess, and a model is only saved when a real
+              one came back — you will see an error, not a placeholder, if it
+              does not.
             </li>
             <li>
               <strong>Menu orders</strong> — when someone orders from a menu,

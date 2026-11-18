@@ -767,6 +767,7 @@ export default function DigitalMenuStudio({
                 {!isSample && shown.items.length > 0 && (
                   <DishStudio
                     items={shown.items}
+                    manualModels={process.env.NEXT_PUBLIC_DISH_MANUAL_MODEL === "1"}
                     onApplyDetails={applyDish}
                     onSetModel={attachModel}
                     onClearDetails={clearDish}

@@ -115,7 +115,40 @@ treatment and the badge on the site.
 `NEXT_PUBLIC_SITE_URL=https://your-domain.com` — used for canonical URLs,
 `sitemap.xml`, `robots.txt`, structured data and the Open Graph image.
 
-### 4. Lead capture (WhatsApp by default, Supabase optional)
+### 4. 3D models (optional — free, but needs two accounts)
+
+Missing either half degrades honestly: without a Space the panel says 3D
+generation isn't switched on, and without storage it refuses **before** spending
+GPU time. Nothing else in the product depends on these.
+
+```bash
+# The generator: a Hugging Face Space running open weights (TripoSR / SF3D /
+# TRELLIS) with ZeroGPU hardware. "Duplicate this Space" on any image-to-3D
+# Space gives you your own URL; paste it here.
+THREED_SPACE_URL=https://your-user-dish-3d.hf.space
+THREED_SPACE_API=/predict          # whichever api_name the Space exposes
+HF_TOKEN=hf_...                    # a free read token; raises your GPU quota
+THREED_PROVIDER_NAME=triposr       # the credit shown beside the model
+
+# Storage: Cloudflare R2 (free tier, 10 GB, no egress fees). Create a bucket,
+# an API token with object read+write, and either an r2.dev subdomain or a
+# custom domain as the public base URL.
+R2_ACCOUNT_ID=...
+R2_BUCKET=dish-models
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_PUBLIC_URL=https://pub-xxxx.r2.dev
+
+# Operator only: reveals plain GLB/poster/credit fields in the studio.
+# Leave unset for cafés — they should never see a file format.
+NEXT_PUBLIC_DISH_MANUAL_MODEL=1
+```
+
+Free ZeroGPU accounts are limited (verified email, account >30 days old, two
+Spaces, **5 GPU-minutes a day** shared per account); that is a few dish models a
+day, and the UI says so rather than pretending otherwise.
+
+### 5. Lead capture (WhatsApp by default, Supabase optional)
 
 The quote form uses **two channels, in this order**. On submit it validates the
 four answers, POSTs a copy to `/api/leads`, and *then* opens WhatsApp with the
@@ -608,6 +641,10 @@ JSON as everything else — **no migration, no new table**:
 }
 ```
 
+That `model.glb` normally comes out of the app itself: the owner picks a photo,
+presses **Generate 3D model**, and gets a URL on the app's own storage. The owner
+never types a URL — see **Photo → 3D** below.
+
 `lib/dish.ts` owns the rules. A `model` survives normalisation only if its `glb`
 is an `https` URL whose path ends in `.glb`/`.gltf`; a poster, if present, must be
 `.jpg`/`.png`/`.webp`/`.avif`. An unusable model is dropped from the row and
@@ -632,11 +669,11 @@ the ingredients list is framed as "on the plate" with the caveat to ask the
 counter about allergens. Nothing in the UI presents an allergen as verified.
 
 **Owner control.** `components/menu/DishStudio.tsx` (lazy — a studio that never
-opens costs nothing) reads a photo, shows the reading in editable fields, and
-writes nothing until the owner presses Save. It also takes the model URL, a
-poster and a credit line, and previews the result in the real viewer before it
-touches the menu. `DISH_LIMITS` caps description at 320 characters, ingredients
-at 8 × 40, and URLs at 400.
+opens costs nothing) takes **one photo** and offers two jobs from it: *Read the
+words* (name, section, description, visible ingredients, all editable) and
+*Generate 3D model*. It writes nothing until the owner presses Save. There is no
+file format, no bucket, no URL and no "made with" field anywhere in the café's
+view; `DISH_LIMITS` caps description at 320 characters and ingredients at 8 × 40.
 
 It ships in two places, from one component:
 
@@ -645,8 +682,14 @@ It ships in two places, from one component:
 - **`variant="full"`** — a card in the owner editor at `/menu/[slug]/edit`,
   between Items and the save bar. This is where an owner comes back weeks later,
   so it gets the whole story: a coverage bar, per-dish chips that show which
-  dishes already have a model, a poster thumbnail, and copy that says outright
-  that nothing goes live until **Save changes**.
+  dishes already have a model, a live elapsed-seconds clock while generating,
+  preview / regenerate / remove, and copy that says outright that nothing goes
+  live until **Save changes**.
+
+`manualModels` is the one exception, and it is not for cafés: an operator sets
+`NEXT_PUBLIC_DISH_MANUAL_MODEL=1` to reveal a collapsed "attach a file directly"
+block (GLB URL, poster, credit) for demos and catalogue photography. Off by
+default, absent from every café-facing string, asserted in the render tests.
 
 The editor wires it to the same three price-blind writers as the homepage
 (`applyDishSuggestion`, `setItemDish`, `setItemModel`), so a model added from the
@@ -655,38 +698,77 @@ during publishing — verified end to end against a mock database: model, poster
 credit and copy survive the round trip, an `http://` model is stripped, and both
 prices come back byte-identical.
 
-#### The generation seam (deliberately unbuilt)
+#### Photo → 3D: a free shared GPU
 
-Nothing here generates a mesh, and the UI never implies otherwise. Every hosted
-image-to-3D API that exists bills per model (Meshy and Tripo expose their APIs
-only on paid plans; Replicate and fal.ai have no free tier), and the free
-open-weights route is a GPU-owning one. The seam is therefore one field:
+The requirement was honest 3D for ₹0, so the pipeline was chosen by what is
+actually free rather than by what is convenient:
 
-| Route | Weights / licence | Hardware | Notes |
-| --- | --- | --- | --- |
-| **TRELLIS.2** (Microsoft) | MIT | ~24 GB VRAM, Linux | Best quality; exports GLB with PBR |
-| **TripoSR** | MIT | 6–8 GB VRAM | Sub-second; good enough for a first pass |
-| **Stable Fast 3D** | free under $1M revenue | ~6 GB VRAM | UV-unwrapped, textured |
-| **Hunyuan3D** (Tencent) | community licence | ~12 GB VRAM | Check the licence before commercial use |
+| Option | Cost for the café | Verdict |
+| --- | --- | --- |
+| Meshy / Tripo / Rodin / fal.ai APIs | $0.16–$0.48 per model, paid plans only | ❌ bills per generation |
+| Free hosted tiers (Meshy 100 credits, Tripo 200–300) | free, but outputs are public, non-commercial or CC BY | ❌ unusable for a café's own menu |
+| **Open weights on a Hugging Face ZeroGPU Space** | **₹0** — shared GPU, 5 GPU-min/day on a free account | ✅ shipped |
+| Browser-local triplane/WebGPU models | free, but 6 GB+ and desktop-class GPUs | ❌ not a phone |
 
-Whoever runs one of those owns the output file and pastes its URL into the
-studio. `model.by` exists so the credit travels with the model. Because the GLB
-is fetched by the customer's browser from the café's host, that host must send
-permissive CORS headers and should serve the file compressed (`gltfpack` or
-Draco shrinks a plate by most of its bytes; the viewer detects Draco and says so
-if the decoder is missing).
+So the app calls a **ZeroGPU Space** that runs **TripoSR** (MIT, ~6 GB VRAM)
+through its Gradio HTTP API — `/gradio_api/call/<api>` to submit, the returned
+`event_id` streamed back as SSE, then the produced file downloaded as bytes. No
+client library, no queue of our own, no billing anywhere.
 
-#### `POST /api/dish-vision`
+```
+photo (JPEG/PNG/WebP, ≤ 4.5 MB)
+  → POST /api/dish-model
+    → rate limit (6 / 30 min per IP)
+    → ZeroGPU Space  ── submit → poll stream → download file
+    → check the first four bytes are "glTF" (a PNG is not a model)
+    → PUT to Cloudflare R2 under dish-models/<sha256[0:40]>.glb
+  ← { ok: true, model: { glb, by }, meta: { provider, via, bytes, seconds } }
+```
 
-`{ image: { mimeType, data } }` with a base64 JPEG/PNG/WebP up to 4 MB, and
-`image/jpeg` only after the client's compressor has run. Returns
-`{ ok, dish: { name, category, description, ingredients, presentation }, meta }`,
-rate limited to **8 / 10 min per IP**, `503 GENERATION_DISABLED` without a
-Gemini key, `502 VISION_FAILED` when every model attempt fails, `400` for a
-missing or unsupported photo, `413` for an oversized body, `405` on `GET`.
+**Storage is Cloudflare R2**, not Supabase Storage: the free tier's 1 GB and 5 GB
+of egress would be spent by one café's menu being opened a few hundred times,
+while R2 charges nothing for egress on 10 GB. Objects are **content-addressed**
+(`sha256` of the bytes, first 40 hex characters), so regenerating the same dish
+stores one object and a URL that has been published once can never change meaning
+underneath it. They are served `Cache-Control: immutable` and
+`Content-Type: model/gltf-binary`. Anything over 40 MB is refused rather than
+shipped to a phone on 4G.
 
-The photo is read and discarded: it is never stored, never attached to the menu
-and never shown publicly. See `app/privacy/page.tsx`.
+**The honest limits, surfaced in the UI, not buried here:**
+
+- Free ZeroGPU accounts get **5 GPU-minutes a day** (2 minutes unauthenticated,
+  pooled per account). A cold Space takes 30–90 s to wake. That is a handful of
+  models a day for the whole deployment — fine for a café adding three dishes,
+  not for a hundred.
+- When the quota is gone, the Space answers 429 and the route returns
+  `429 GENERATION_BUSY` with `Retry-After`; the panel says the free GPU is busy
+  and offers **Try again**, with an elapsed-seconds clock so the wait is visible.
+  It never fabricates a model, a progress bar that means nothing, or a preview.
+- The back of a single-photo mesh is the model's best guess. The panel says so.
+- Nothing is written to storage until a real `glTF` container came back: a
+  picture, an HTML error page or an empty body is a `502 BAD_OUTPUT`, and the
+  dish keeps the model it already had.
+
+`model.by` records the real generator (`triposr`, or whatever
+`THREED_PROVIDER_NAME` says) and travels with the model, so a credit is never
+invented.
+
+#### `POST /api/dish-model`
+
+`{ image: { mimeType, data } }` — base64 JPEG/PNG/WebP, raw with no `data:`
+prefix, already downscaled in the browser. `400 BAD_PHOTO` for a format or a stub
+that can't be sent, `413 REQUEST_TOO_LARGE` past 4.5 MB, `429 RATE_LIMITED` past
+six generations in thirty minutes, `503 GENERATION_DISABLED` when
+`THREED_SPACE_URL` is unset, `503 STORAGE_DISABLED` when the `R2_*` variables are
+missing (checked **before** the GPU is spent), `429 GENERATION_BUSY` on a quota
+wall, `502 GENERATION_FAILED` when the Space errors, `502 BAD_OUTPUT` when the
+file it returned is not a mesh, `502 STORAGE_FAILED` when the upload is refused.
+Every failure is `{ error, code, hint?, retryAfter? }` and every one of them
+leaves the menu untouched. `GET` answers `405` with `{ provider, storage }` so a
+deployment can be health-checked without spending GPU time (`maxDuration = 300`).
+
+`lib/space-3d.ts` owns the Gradio conversation; `lib/model-store.ts` owns R2. Both
+are `server-only`, so no bucket name or access key can reach a bundle.
 
 #### The viewer
 
@@ -700,6 +782,18 @@ its own). Models are auto-centred, scaled to ~1.9 units and stood on the floor;
 the scene is disposed on close, rotation stops under `prefers-reduced-motion`,
 and every load failure has its own sentence (including the Draco one) with the
 poster as a fallback.
+
+#### `POST /api/dish-vision`
+
+`{ image: { mimeType, data } }` with a base64 JPEG/PNG/WebP up to 4 MB, and
+`image/jpeg` only after the client's compressor has run. Returns
+`{ ok, dish: { name, category, description, ingredients, presentation }, meta }`,
+rate limited to **8 / 10 min per IP**, `503 GENERATION_DISABLED` without a
+Gemini key, `502 VISION_FAILED` when every model attempt fails, `400` for a
+missing or unsupported photo, `413` for an oversized body, `405` on `GET`.
+
+The photo is read and discarded: it is never stored, never attached to the menu
+and never shown publicly. See `app/privacy/page.tsx`.
 
 ### `POST /api/menus`
 
@@ -791,6 +885,8 @@ app/
   api/leads/route.ts       # lead intake (Supabase + graceful fallback)
   api/menus/route.ts       # publish a menu → public URL + one-time edit link
   api/menus/[slug]/route.ts# keyed read + save for one menu
+  api/dish-vision/route.ts # photo → words (Gemini), never touches a price
+  api/dish-model/route.ts  # photo → real GLB: free ZeroGPU Space + R2
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
   menu/demo/page.tsx       # the page the demo QR points at (server component)
@@ -834,6 +930,8 @@ lib/
   menu-store.ts            # Supabase RPC reads/writes — server only
   order.ts                 # cart maths, price parsing, the WhatsApp message
   dish.ts                  # dish/model limits, URL safety, claim + price scrubbing
+  space-3d.ts              # photo → mesh on a free ZeroGPU Space (Gradio + SSE)
+  model-store.ts           # content-addressed GLB storage on Cloudflare R2
   image.ts                 # browser-side photo validation, downscale, JPEG encode
   menu-draft.ts            # the price-blind item writers (suggestions, dish, model)
   menu-translate.ts        # languages, coverage, sticky-original overlay
