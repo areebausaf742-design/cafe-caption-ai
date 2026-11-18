@@ -32,10 +32,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * 120 items now carry up to three languages each, so the ceiling has room for
- * the worst case (120 lines, Hindi + Hinglish on every one) with a margin.
+ * 120 items now carry up to three languages each, and a dish can also carry a
+ * description, eight ingredients and two long asset URLs, so the ceiling has
+ * room for the worst case with a margin. A menu this size is still far below
+ * what the database column and the page renderer are happy with.
  */
-const MAX_BODY_BYTES = 128_000;
+const MAX_BODY_BYTES = 512_000;
 
 /** A menu is a bigger write than a lead, so it gets a tighter window. */
 const LIMIT = { namespace: "menu-publish", max: 5, windowMs: 10 * 60 * 1000 };
@@ -77,7 +79,11 @@ export async function POST(request: Request) {
   if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
     return withRateHeaders(
       NextResponse.json(
-        { error: "That menu is too big to publish.", code: "REQUEST_TOO_LARGE" },
+        {
+          error:
+            "That menu is too big to publish. Long 3D links or descriptions on many dishes usually push it over — shorten a few and try again.",
+          code: "REQUEST_TOO_LARGE",
+        },
         { status: 413 },
       ),
       rate,

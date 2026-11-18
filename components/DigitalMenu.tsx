@@ -8,6 +8,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import dynamic from "next/dynamic";
 import {
   AlertCircle,
   ArrowRight,
@@ -53,17 +54,27 @@ import {
 } from "@/lib/menu-translate";
 import {
   addItem,
+  applyDishSuggestion,
   cafeNameProblem,
   checkDraft,
   removeItem,
   renameSection,
+  setItemDish,
   setItemField,
+  setItemModel,
 } from "@/lib/menu-draft";
 import {
   MAX_CAFE_NAME_LENGTH,
   type DigitalMenu as MenuData,
   type MenuItem,
 } from "@/lib/types";
+
+/** The dish studio pulls in photo compression and the 3D preview — fetched on
+ *  first use, so a café that never opens it never downloads it. */
+const DishStudio = dynamic(() => import("@/components/menu/DishStudio"), {
+  ssr: false,
+  loading: () => null,
+});
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -313,6 +324,30 @@ export default function DigitalMenuStudio({
 
   const editSection = useCallback((from: string, to: string) => {
     setItems((current) => (current ? renameSection(current, from, to) : current));
+    setPublishError(null);
+  }, []);
+
+  /* ------------------------ dishes: words and models ---------------------- */
+  // Three writers, all price-blind by construction: the suggestion path moves
+  // name/section/copy, the dish path moves copy, the model path moves a URL.
+
+  const applyDish = useCallback(
+    (
+      index: number,
+      suggestion: { name: string; category: string; description: string; ingredients: string[] },
+    ) => {
+      setItems((current) => (current ? applyDishSuggestion(current, index, suggestion) : current));
+      setPublishError(null);
+    },
+    [],
+  );
+
+  const clearDish = useCallback((index: number) => {
+    setItems((current) => (current ? setItemDish(current, index, null) : current));
+  }, []);
+
+  const attachModel = useCallback((index: number, model: MenuItem["model"] | null) => {
+    setItems((current) => (current ? setItemModel(current, index, model ?? null) : current));
     setPublishError(null);
   }, []);
 
@@ -729,6 +764,15 @@ export default function DigitalMenuStudio({
               />
 
               <div className="space-y-3">
+                {!isSample && shown.items.length > 0 && (
+                  <DishStudio
+                    items={shown.items}
+                    onApplyDetails={applyDish}
+                    onSetModel={attachModel}
+                    onClearDetails={clearDish}
+                  />
+                )}
+
                 <div className="hairline relative rounded-xl bg-white/70 p-4 text-center">
                   <p className="flex items-center justify-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-espresso-400">
                     <QrCode className="h-3 w-3" aria-hidden />

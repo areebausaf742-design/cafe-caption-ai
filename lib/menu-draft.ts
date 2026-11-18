@@ -14,7 +14,8 @@
  */
 
 import { MAX_CATEGORY, MAX_ITEM_NAME, MAX_ITEMS, MAX_PRICE } from "@/lib/menu";
-import type { MenuItem } from "@/lib/types";
+import { DISH_LIMITS } from "@/lib/dish";
+import type { DishDetails, DishModel, MenuItem } from "@/lib/types";
 
 /** The two fields a person types into on a row; the section name has its own. */
 export type MenuField = "name" | "price";
@@ -81,6 +82,118 @@ export function renameSection(
   return items.map((item) =>
     item.category === from ? { ...item, category: next } : item,
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Dishes: words and models                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Attach (or clear) a dish's description and visible ingredients.
+ *
+ * `null` removes the field entirely rather than leaving `{ description: "" }`
+ * behind — an empty dish would still light up the card's "more" affordance and
+ * open a panel with nothing in it.
+ */
+export function setItemDish(
+  items: MenuItem[],
+  index: number,
+  dish: DishDetails | null,
+): MenuItem[] {
+  if (index < 0 || index >= items.length) return items;
+  // Clearing something that isn't there must not re-render the list.
+  if (!dish && !items[index].dish) return items;
+
+  return items.map((item, i) => {
+    if (i !== index) return item;
+    if (!dish) {
+      const rest = { ...item };
+      delete rest.dish;
+      return rest;
+    }
+    return { ...item, dish };
+  });
+}
+
+/**
+ * Attach (or clear) a real GLB.
+ *
+ * The URL is validated here as well as server-side: a typo in the studio should
+ * read as "that isn't a GLB URL" next to the field, not as a 3D button on a
+ * live menu that fails to load in front of a customer.
+ */
+export function setItemModel(
+  items: MenuItem[],
+  index: number,
+  model: DishModel | null,
+): MenuItem[] {
+  if (index < 0 || index >= items.length) return items;
+  if (!model && !items[index].model) return items;
+
+  return items.map((item, i) => {
+    if (i !== index) return item;
+    if (!model) {
+      const rest = { ...item };
+      delete rest.model;
+      return rest;
+    }
+    return { ...item, model };
+  });
+}
+
+/**
+ * Apply an accepted AI suggestion to one row.
+ *
+ * Three fields move — name, section, dish copy — and **the price does not**.
+ * That is the whole reason this is a function instead of three `setState`
+ * calls: the studio can accept a model's reading of a photo, and the number the
+ * café typed is provably outside the write.
+ */
+export function applyDishSuggestion(
+  items: MenuItem[],
+  index: number,
+  suggestion: {
+    name?: string;
+    category?: string;
+    description?: string;
+    ingredients?: string[];
+  },
+): MenuItem[] {
+  if (index < 0 || index >= items.length) return items;
+
+  const current = items[index];
+  const name = suggestion.name
+    ? tidy(suggestion.name).trim().slice(0, MAX_ITEM_NAME) || current.name
+    : current.name;
+  const category = suggestion.category
+    ? tidy(suggestion.category).trim().slice(0, MAX_CATEGORY) || current.category
+    : current.category;
+
+  const description = (suggestion.description ?? "").trim().slice(0, DISH_LIMITS.description);
+  const ingredients = (suggestion.ingredients ?? [])
+    .map((entry) => entry.trim().slice(0, DISH_LIMITS.ingredient))
+    .filter(Boolean)
+    .slice(0, DISH_LIMITS.ingredients);
+
+  const dish: DishDetails = {
+    description,
+    ingredients,
+    source: "ai",
+  };
+
+  return items.map((item, i) => {
+    if (i !== index) return item;
+
+    const next: MenuItem = { ...item, name, category };
+    if (description || ingredients.length) {
+      next.dish = dish;
+    } else {
+      // Saving an empty panel is the owner clearing the copy, not a request to
+      // keep the old description under a new name.
+      delete next.dish;
+    }
+    return next;
+  });
 }
 
 /**

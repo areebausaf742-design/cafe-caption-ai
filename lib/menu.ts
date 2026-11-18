@@ -13,6 +13,7 @@ import {
   type MenuItem,
   type MenuTranslations,
 } from "@/lib/types";
+import { normalizeDish, normalizeModel } from "@/lib/dish";
 
 /* -------------------------------------------------------------------------- */
 /*  Limits (mirrored by the checks in supabase/schema.sql)                    */
@@ -110,11 +111,20 @@ export function normalizeItems(input: unknown): MenuItem[] {
     const category = text(row.category, MAX_CATEGORY) || "Menu";
     const translations = normalizeTranslations(row.translations, category);
 
-    items.push(
-      translations
-        ? { category, name, price, translations }
-        : { category, name, price },
-    );
+    // The dish and its model are additive: a row is never dropped, renamed or
+    // re-priced because of them. A bogus GLB URL costs the menu its 3D button,
+    // not its food.
+    const dish = normalizeDish(row.dish);
+    const model = normalizeModel(row.model);
+
+    items.push({
+      category,
+      name,
+      price,
+      ...(translations ? { translations } : {}),
+      ...(dish ? { dish } : {}),
+      ...(model ? { model } : {}),
+    });
   }
   return items;
 }

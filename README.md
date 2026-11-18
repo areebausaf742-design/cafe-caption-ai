@@ -593,6 +593,97 @@ name has changed, so stale Hindi never appears beside a renamed dish.
 GENERATION_DISABLED` without a Gemini key, `502 TRANSLATION_FAILED` when every
 model attempt fails.
 
+### Dish details and 3D models
+
+A menu line can carry two optional companions, both stored inside the same items
+JSON as everything else — **no migration, no new table**:
+
+```jsonc
+{
+  "category": "Beverages",
+  "name": "Masala Chai",
+  "price": "₹80",
+  "dish":  { "description": "Slow-brewed with crushed ginger.", "ingredients": ["Milk", "Ginger"], "source": "ai" },
+  "model": { "glb": "https://cdn.example.com/chai.glb", "poster": "https://cdn.example.com/chai.jpg", "by": "triposr" }
+}
+```
+
+`lib/dish.ts` owns the rules. A `model` survives normalisation only if its `glb`
+is an `https` URL whose path ends in `.glb`/`.gltf`; a poster, if present, must be
+`.jpg`/`.png`/`.webp`/`.avif`. An unusable model is dropped from the row and
+**the row is never dropped** — a café's price and name are not collateral damage
+from a broken link. `components/menu/MenuCard.tsx` grows a "See it in 3D" button
+only for rows with a real model, so a menu with no 3D looks exactly as it did
+before this shipped.
+
+**Prices.** A suggestion can write a name, a section, a description and an
+ingredient list. It cannot write a price: `applyDishSuggestion` in
+`lib/menu-draft.ts` builds the next row from those four values and the untouched
+rest, so there is no code path from a photo, a model or a prompt to `price`. Copy
+that mentions money is discarded too (`scrubCopy` drops any sentence with a
+currency amount), because "Chai for ₹999" beside the real ₹80 is worse than no
+description.
+
+**Accuracy.** A model reading a photo can only see so much, and the honest
+failure is a sentence that sounds authoritative. `statesAClaim`/`scrubCopy`
+delete whole sentences that assert allergens or diets — gluten-free, vegan,
+nut-free, healthy, organic, halal and friends — rather than rewriting them, and
+the ingredients list is framed as "on the plate" with the caveat to ask the
+counter about allergens. Nothing in the UI presents an allergen as verified.
+
+**Owner control.** `components/menu/DishStudio.tsx` (lazy — a studio that never
+opens costs nothing) reads a photo, shows the reading in editable fields, and
+writes nothing until the owner presses Save. It also takes the model URL, a
+poster and a credit line, and previews the result in the real viewer before it
+touches the menu. `DISH_LIMITS` caps description at 320 characters, ingredients
+at 8 × 40, and URLs at 400.
+
+#### The generation seam (deliberately unbuilt)
+
+Nothing here generates a mesh, and the UI never implies otherwise. Every hosted
+image-to-3D API that exists bills per model (Meshy and Tripo expose their APIs
+only on paid plans; Replicate and fal.ai have no free tier), and the free
+open-weights route is a GPU-owning one. The seam is therefore one field:
+
+| Route | Weights / licence | Hardware | Notes |
+| --- | --- | --- | --- |
+| **TRELLIS.2** (Microsoft) | MIT | ~24 GB VRAM, Linux | Best quality; exports GLB with PBR |
+| **TripoSR** | MIT | 6–8 GB VRAM | Sub-second; good enough for a first pass |
+| **Stable Fast 3D** | free under $1M revenue | ~6 GB VRAM | UV-unwrapped, textured |
+| **Hunyuan3D** (Tencent) | community licence | ~12 GB VRAM | Check the licence before commercial use |
+
+Whoever runs one of those owns the output file and pastes its URL into the
+studio. `model.by` exists so the credit travels with the model. Because the GLB
+is fetched by the customer's browser from the café's host, that host must send
+permissive CORS headers and should serve the file compressed (`gltfpack` or
+Draco shrinks a plate by most of its bytes; the viewer detects Draco and says so
+if the decoder is missing).
+
+#### `POST /api/dish-vision`
+
+`{ image: { mimeType, data } }` with a base64 JPEG/PNG/WebP up to 4 MB, and
+`image/jpeg` only after the client's compressor has run. Returns
+`{ ok, dish: { name, category, description, ingredients, presentation }, meta }`,
+rate limited to **8 / 10 min per IP**, `503 GENERATION_DISABLED` without a
+Gemini key, `502 VISION_FAILED` when every model attempt fails, `400` for a
+missing or unsupported photo, `413` for an oversized body, `405` on `GET`.
+
+The photo is read and discarded: it is never stored, never attached to the menu
+and never shown publicly. See `app/privacy/page.tsx`.
+
+#### The viewer
+
+`components/menu/DishViewer.tsx` is a real three.js scene — `GLTFLoader`,
+`OrbitControls` with damping and clamped distance, `RoomEnvironment` for
+reflections, key/rim/ambient lights, a shadow-catching floor, ACES tone mapping —
+and it is loaded only when a customer asks for it: `next/dynamic` for the panel,
+`await import("three")` inside the effect for the library. A published menu page
+that nobody inspects ships none of three.js (`three` lands in an async chunk of
+its own). Models are auto-centred, scaled to ~1.9 units and stood on the floor;
+the scene is disposed on close, rotation stops under `prefers-reduced-motion`,
+and every load failure has its own sentence (including the Draco one) with the
+poster as a fallback.
+
 ### `POST /api/menus`
 
 Publishes a menu and returns `{ ok, slug, url, editUrl, key }` — `201`, and the
@@ -632,6 +723,13 @@ Every event is declared in `lib/analytics.ts` and fired through `track()`:
 | `copy` | A caption, hashtag set or “copy all” succeeds | `kind` |
 | `lead_submit` | The quote form is submitted | `interest` |
 | `cta_click` | Any WhatsApp, email, booking or package CTA | `location`, `label` |
+| `seo_generate` | A Local SEO tool (review reply or Google post) succeeds | `tool`, `rating` |
+| `menu_generate` | A menu photo is read into lines | `items`, `categories` |
+| `qr_download` | A QR code is downloaded | `target` (`demo` / `own`) |
+| `menu_publish` | A menu goes live | `items`, `categories`, `attempt`, `translated` |
+| `order_send` | A cart is handed to WhatsApp | `items`, `units`, `has_note`, `total_known` |
+| `menu_language` | A customer switches the menu's language | `language` |
+| `dish_3d_open` | A dish is opened in the 3D viewer | `had_poster` — never which dish |
 
 Page views are captured too (`capture_pageview: true`).
 
@@ -639,7 +737,7 @@ Page views are captured too (`capture_pageview: true`).
 
 - `persistence: "memory"` → no cookies, no localStorage, so no consent banner.
 - `person_profiles: "identified_only"` → anonymous visitors stay anonymous.
-- `autocapture: false` → only the four declared events, never form contents.
+- `autocapture: false` → only the declared events above, never form contents.
 - `disable_session_recording: true` → no screen recording.
 - `respect_dnt: true` → visitors sending Do Not Track are ignored entirely.
 
@@ -697,6 +795,8 @@ components/
   menu/MenuEditor.tsx      # the editor: fields, item rows, save, editor link
   menu/MenuOrder.tsx       # the cart: steppers, order sheet, wa.me handoff
   menu/MenuLanguages.tsx   # language switcher + card + cart, one island
+  menu/DishViewer.tsx      # three.js viewer (lazy; three is an async chunk)
+  menu/DishStudio.tsx      # owner panel: photo reading, model URL, preview
   studio/StudioTabs.tsx    # shared-element tab switcher (framer-motion layoutId)
   studio/StarRating.tsx    # accessible 1–5★ radio group, 44px targets
   studio/CopyIconButton.tsx# 44×44 copy control with tooltip + tick
@@ -716,6 +816,10 @@ lib/
   menu.ts                  # menu contract, slugs, capability keys (shared)
   menu-store.ts            # Supabase RPC reads/writes — server only
   order.ts                 # cart maths, price parsing, the WhatsApp message
+  dish.ts                  # dish/model limits, URL safety, claim + price scrubbing
+  image.ts                 # browser-side photo validation, downscale, JPEG encode
+  menu-draft.ts            # the price-blind item writers (suggestions, dish, model)
+  menu-translate.ts        # languages, coverage, sticky-original overlay
   rate-limit.ts            # hashed-IP limiter used by both API routes
   studio-client.ts         # one fetch helper for all three tools (70s abort, typed errors)
   site.ts                  # site URL + SEO copy

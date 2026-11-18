@@ -1,5 +1,6 @@
-import { Minus, Plus, QrCode, Trash2, UtensilsCrossed } from "lucide-react";
+import { Minus, Plus, QrCode, Rotate3d, Trash2, UtensilsCrossed } from "lucide-react";
 
+import { hasModel } from "@/lib/dish";
 import { MAX_CATEGORY, MAX_ITEM_NAME, MAX_PRICE } from "@/lib/menu";
 import type { DigitalMenu as MenuData, MenuItem } from "@/lib/types";
 
@@ -45,6 +46,7 @@ export default function MenuCard({
   updated,
   order,
   edit,
+  onInspect,
 }: {
   menu: MenuData;
   cafeName: string;
@@ -55,6 +57,11 @@ export default function MenuCard({
   order?: MenuOrderControl;
   /** Present only in the studio, before publishing. */
   edit?: MenuEditControl;
+  /**
+   * Present when the page can open the 3D viewer. Only rows that actually
+   * carry a GLB get the affordance — no button for a model that isn't there.
+   */
+  onInspect?: (index: number) => void;
 }) {
   // Index-preserving grouping: the cart is keyed by position in `menu.items`,
   // and an editable row has to keep editing the row it was rendered from.
@@ -121,6 +128,7 @@ export default function MenuCard({
                   index={index}
                   order={order}
                   edit={edit}
+                  onInspect={onInspect}
                 />
               ))}
             </ul>
@@ -183,11 +191,13 @@ function MenuRow({
   index,
   order,
   edit,
+  onInspect,
 }: {
   item: MenuItem;
   index: number;
   order?: MenuOrderControl;
   edit?: MenuEditControl;
+  onInspect?: (index: number) => void;
 }) {
   if (edit) {
     return <EditableRow item={item} index={index} edit={edit} />;
@@ -211,6 +221,18 @@ function MenuRow({
       <span className="shrink-0 text-[12px] font-semibold tabular-nums text-espresso-800 sm:text-[12.5px]">
         {item.price}
       </span>
+
+      {onInspect && hasModel(item) && (
+        <button
+          type="button"
+          onClick={() => onInspect(index)}
+          aria-label={`See ${item.name} in 3D`}
+          title="See it in 3D"
+          className="tap ml-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-caramel-600/30 bg-caramel-50/80 text-caramel-700 hover:border-caramel-600/60 hover:bg-caramel-100/80 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45"
+        >
+          <Rotate3d className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      )}
 
       {order && (
         <span className="ml-0.5 flex shrink-0 items-center">

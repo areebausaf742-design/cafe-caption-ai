@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { Languages } from "lucide-react";
 
 import MenuCard from "@/components/menu/MenuCard";
 import MenuOrder from "@/components/menu/MenuOrder";
+import { hasModel, recommendations } from "@/lib/dish";
 import { track } from "@/lib/analytics";
 import { toDigitalMenu } from "@/lib/menu";
 import {
@@ -16,6 +18,12 @@ import {
   type MenuLanguage,
 } from "@/lib/menu-translate";
 import type { MenuItem } from "@/lib/types";
+
+// The viewer is fetched the first time somebody actually turns a dish. Menus
+// that have no models — or that nobody inspects — never pay for it.
+const DishViewer = dynamic(() => import("@/components/menu/DishViewer"), {
+  ssr: false,
+});
 
 /**
  * The menu a customer actually reads: same card, same cart, three languages.
@@ -44,15 +52,22 @@ export default function MenuLanguages({
 }) {
   const languages = useMemo(() => availableLanguages(items), [items]);
   const [language, setLanguage] = useState<MenuLanguage>("en");
+  // Which dish is open in 3D, by index into `items`. Lives here — next to the
+  // cart — so turning a dish can never reset an order in progress.
+  const [inspecting, setInspecting] = useState<number | null>(null);
 
   // If an edited menu loses a language, fall back rather than render blanks.
   const active = languages.includes(language) ? language : "en";
   const meta = languageMeta(active);
 
-  const localized = useMemo(
-    () => toDigitalMenu(localizeItems(items, active)),
-    [items, active],
-  );
+  const localizedItems = useMemo(() => localizeItems(items, active), [items, active]);
+  const localized = useMemo(() => toDigitalMenu(localizedItems), [localizedItems]);
+
+  const inspectingItem = inspecting === null ? null : items[inspecting];
+  const openInspect = useCallback((index: number) => {
+    setInspecting(index);
+    track({ name: "dish_3d_open" });
+  }, []);
 
   // Screen readers pick their voice from here, so a Devanagari menu isn't read
   // out in an English accent.
@@ -138,6 +153,7 @@ export default function MenuLanguages({
           whatsapp={whatsapp}
           updated={updated}
           language={active}
+          onInspect={openInspect}
         />
       ) : (
         <MenuCard
@@ -145,6 +161,20 @@ export default function MenuLanguages({
           cafeName={cafeName}
           isSample={false}
           updated={updated}
+          onInspect={openInspect}
+        />
+      )}
+
+      {inspecting !== null && inspectingItem && hasModel(inspectingItem) && (
+        <DishViewer
+          // Re-mounting on a different dish resets the whole three.js scene
+          // rather than trying to swap geometry inside a live renderer.
+          key={`${inspectingItem.name}-${inspectingItem.model?.glb}`}
+          name={localizedItems[inspecting]?.name ?? inspectingItem.name}
+          dish={inspectingItem.dish}
+          model={inspectingItem.model!}
+          recommendations={recommendations(localizedItems, inspecting)}
+          onClose={() => setInspecting(null)}
         />
       )}
     </>

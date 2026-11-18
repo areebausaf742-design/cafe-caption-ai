@@ -69,6 +69,22 @@ export default function PrivacyPage() {
               anything costs. The translated names are stored with the menu.
             </li>
             <li>
+              <strong>Dish photos</strong> — a food photo you choose in the
+              studio is shrunk in your browser and sent once to Google&rsquo;s
+              Gemini API to suggest a name, a description and the ingredients
+              visible in the picture. The photo is <strong>not stored</strong>,
+              not attached to the menu and never shown publicly; only the words
+              you approve are kept. Ingredient lists describe what is visible in
+              the photo and are never a statement about allergens — ask the café.
+            </li>
+            <li>
+              <strong>3D models</strong> — a dish model is a file you host
+              yourself. We store its URL and serve a viewer that fetches it from
+              your link, so your host sees the same request any image on your
+              menu would. Nothing is generated on our side and no photo is sent
+              to a 3D service.
+            </li>
+            <li>
               <strong>Menu orders</strong> — when someone orders from a menu,
               the cart is put together in their own browser and handed to
               WhatsApp. It never passes through this site&rsquo;s servers, so we
