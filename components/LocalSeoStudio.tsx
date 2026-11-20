@@ -18,6 +18,8 @@ import * as m from "framer-motion/m";
 
 import {
   GOOGLE_POST_MAX_CHARS,
+  MAX_CAFE_NAME_LENGTH,
+  MAX_CITY_LENGTH,
   MAX_REVIEW_LENGTH,
   MAX_TOPIC_LENGTH,
   MIN_REVIEW_LENGTH,
@@ -524,8 +526,10 @@ export default function LocalSeoStudio({
                 id="seo-cafe-name"
                 type="text"
                 value={cafeName}
-                onChange={(event) => onCafeName(event.target.value.slice(0, 60))}
-                maxLength={60}
+                onChange={(event) =>
+                  onCafeName(event.target.value.slice(0, MAX_CAFE_NAME_LENGTH))
+                }
+                maxLength={MAX_CAFE_NAME_LENGTH}
                 placeholder="The Daily Grind"
                 className="input py-2 pl-9 pr-3 text-base sm:text-[13.5px]"
                 disabled={isLoading}
@@ -547,8 +551,8 @@ export default function LocalSeoStudio({
                 id="seo-cafe-city"
                 type="text"
                 value={city}
-                onChange={(event) => onCity(event.target.value.slice(0, 60))}
-                maxLength={60}
+                onChange={(event) => onCity(event.target.value.slice(0, MAX_CITY_LENGTH))}
+                maxLength={MAX_CITY_LENGTH}
                 placeholder="Lucknow"
                 className="input py-2 pl-9 pr-3 text-base sm:text-[13.5px]"
                 disabled={isLoading}

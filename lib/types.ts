@@ -245,7 +245,7 @@ export const EXAMPLES: { label: string; text: string }[] = [
 ];
 
 export const MAX_DESCRIPTION_LENGTH = 400;
-export const MAX_CAFE_NAME_LENGTH = 60;
+export const MAX_CAFE_NAME_LENGTH = 80;
 export const MAX_CITY_LENGTH = 40;
 
 /* -------------------------------------------------------------------------- */
@@ -290,7 +290,9 @@ export const RATING_LABELS: Record<StarRating, string> = {
 /** Fewer than this from a menu photo means the model didn't really read it. */
 export const MIN_MENU_ITEMS = 3;
 /** Beyond this a "menu" is probably a price list the length of a book. */
-export const MAX_MENU_ITEMS = 200;
+// Same ceiling the menu stores: 120 rows (see lib/limits.ts). A longer read is
+// truncated to what can actually be published rather than rejected outright.
+export const MAX_MENU_ITEMS = 120;
 export const MAX_MENU_ITEM_NAME = 80;
 export const MAX_MENU_PRICE = 24;
 export const MAX_MENU_CATEGORY = 40;

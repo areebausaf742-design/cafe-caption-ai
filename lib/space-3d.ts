@@ -20,8 +20,30 @@ const SPACE_API = process.env.THREED_SPACE_API?.trim() || "/predict";
 const HF_TOKEN = process.env.HF_TOKEN?.trim();
 const PROVIDER = process.env.THREED_PROVIDER_NAME?.trim() || "triposr";
 
-/** Any one HTTP leg of the conversation. The route owns the overall budget. */
-const LEG_TIMEOUT_MS = 90_000;
+/**
+ * Time budgets, per leg, inside one overall budget.
+ *
+ * The route allows itself 300 s (`maxDuration`); the download then has to be
+ * stored, so the whole conversation is capped at 240 s and each leg gets its own
+ * ceiling — a submit that never answers shouldn't eat the time a slow stream
+ * needs, and a stream that hangs shouldn't leave nothing for the download.
+ */
+const TOTAL_BUDGET_MS = 240_000;
+const SUBMIT_TIMEOUT_MS = 45_000;
+const STREAM_TIMEOUT_MS = 150_000;
+const DOWNLOAD_TIMEOUT_MS = 90_000;
+
+/**
+ * One leg's signal: the overall abort, plus that leg's own timeout. A cancelled
+ * request is what actually stops the upstream work; a `Promise.race` would leave
+ * it running and still holding the socket.
+ */
+function legSignal(controller: AbortController, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return typeof AbortSignal.any === "function"
+    ? AbortSignal.any([controller.signal, timeout])
+    : controller.signal;
+}
 
 export function generatorConfigured(): boolean {
   return Boolean(SPACE_URL);
@@ -228,7 +250,7 @@ export async function generateModel(
   const controller = new AbortController();
   const cancel = () => controller.abort();
   signal?.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(cancel, LEG_TIMEOUT_MS);
+  const timer = setTimeout(cancel, TOTAL_BUDGET_MS);
 
   try {
     /* ------------------------------ start ------------------------------ */
@@ -241,7 +263,7 @@ export async function generateModel(
       body: JSON.stringify({
         data: [`data:${photo.mimeType};base64,${photo.data}`],
       }),
-      signal: controller.signal,
+      signal: legSignal(controller, SUBMIT_TIMEOUT_MS),
     });
 
     const startText = await start.text();
@@ -274,7 +296,10 @@ export async function generateModel(
     /* ------------------------------ collect ---------------------------- */
     const stream = await fetch(
       `${SPACE_URL}/gradio_api/call${SPACE_API}/${encodeURIComponent(eventId)}`,
-      { headers: { Accept: "text/event-stream", ...authHeaders() }, signal: controller.signal },
+      {
+        headers: { Accept: "text/event-stream", ...authHeaders() },
+        signal: legSignal(controller, STREAM_TIMEOUT_MS),
+      },
     );
 
     if (!stream.ok) {
@@ -327,7 +352,7 @@ export async function generateModel(
     const file = await fetch(target.url, {
       headers: target.sameOrigin ? authHeaders() : {},
       redirect: "error",
-      signal: controller.signal,
+      signal: legSignal(controller, DOWNLOAD_TIMEOUT_MS),
     });
 
     if (!file.ok) {

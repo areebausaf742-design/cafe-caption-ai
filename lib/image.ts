@@ -115,11 +115,23 @@ export function base64Bytes(base64: string): number {
   return Math.floor((clean.length * 3) / 4);
 }
 
-/** True when the file claims to be an image we're willing to decode. */
+/**
+ * True when the file claims — or, when it claims nothing, looks like — an image
+ * we're willing to decode.
+ *
+ * Some phones and a few file pickers hand over a HEIC with an empty
+ * `File.type`, which used to be rejected before the platform's own decoder ever
+ * saw it. Falling back to the extension lets `decodeImage` decide: if the OS
+ * can read it, the photo is accepted; if not, the error is honest.
+ */
 export function isSupportedImageFile(file: File): boolean {
-  if (!file.type) return false; // some HEIC uploads arrive with no type
   if (BLOCKED_TYPES.has(file.type)) return false;
-  return file.type.startsWith("image/");
+  if (file.type) return file.type.startsWith("image/");
+
+  const name = file.name ?? "";
+  if (!/\.(jpe?g|png|webp|heic|heif|avif)$/i.test(name)) return false;
+  // Still a size check: a 200 MB "photo" is a mistake whatever it is called.
+  return file.size > 0;
 }
 
 /* -------------------------------------------------------------------------- */

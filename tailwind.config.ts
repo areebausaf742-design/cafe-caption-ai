@@ -36,12 +36,16 @@ const config: Config = {
         },
         // Accent — caramel / amber
         caramel: {
+          // 50 and 700 were referenced by the menu UI (chips, "from the photo"
+          // badges) before they existed, so those classes silently did nothing.
+          50: "#FEF6EA",
           100: "#FBEBD3",
           200: "#F6D7AC",
           300: "#EDBB7C",
           400: "#E2A25C",
           500: "#C9803C",
           600: "#A9632C",
+          700: "#854A1E",
         },
         // Secondary accent — matcha / sage (used sparingly)
         sage: {

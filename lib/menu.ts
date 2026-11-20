@@ -14,17 +14,27 @@ import {
   type MenuTranslations,
 } from "@/lib/types";
 import { normalizeDish, normalizeModel } from "@/lib/dish";
+import {
+  MAX_CAFE_NAME,
+  MAX_CATEGORY,
+  MAX_ITEMS,
+  MAX_ITEM_NAME,
+  MAX_PRICE,
+  MAX_TAGLINE,
+} from "@/lib/limits";
 
 /* -------------------------------------------------------------------------- */
 /*  Limits (mirrored by the checks in supabase/schema.sql)                    */
 /* -------------------------------------------------------------------------- */
 
-export const MAX_ITEMS = 120;
-export const MAX_CAFE_NAME = 80;
-export const MAX_TAGLINE = 90;
-export const MAX_CATEGORY = 40;
-export const MAX_ITEM_NAME = 80;
-export const MAX_PRICE = 16;
+export {
+  MAX_ITEMS,
+  MAX_CAFE_NAME,
+  MAX_TAGLINE,
+  MAX_CATEGORY,
+  MAX_ITEM_NAME,
+  MAX_PRICE,
+} from "@/lib/limits";
 
 /** Bytes of randomness in an edit key — 24 bytes is 32 URL-safe characters. */
 export const EDIT_KEY_BYTES = 24;

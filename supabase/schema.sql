@@ -246,7 +246,7 @@ as $$
        ) as item
        where jsonb_typeof(item) <> 'object'
           or coalesce(char_length(item ->> 'name'), 0) not between 1 and 80
-          or coalesce(char_length(item ->> 'price'), 0) not between 1 and 16
+          or coalesce(char_length(item ->> 'price'), 0) not between 1 and 24
           or coalesce(char_length(item ->> 'category'), 0) > 40
      );
 $$;

@@ -35,6 +35,27 @@ import type { DishDetails, DishModel } from "@/lib/types";
 
 type Stage = "loading" | "ready" | "error";
 
+/** Matches `MAX_MODEL_BYTES` in `lib/model-store.ts`. */
+const MAX_MODEL_BYTES = 40 * 1024 * 1024;
+
+/**
+ * Ask the host how big the file is, without downloading it.
+ *
+ * Returns `true` only when the answer is a definite "too large". A missing
+ * `Content-Length`, a blocked HEAD or a CORS refusal all mean "unknown", and the
+ * viewer proceeds — the honest default is to try, not to refuse to show a menu.
+ */
+async function headTooLarge(url: string, limit: number): Promise<boolean> {
+  try {
+    const response = await fetch(url, { method: "HEAD", mode: "cors", cache: "no-store" });
+    if (!response.ok) return false;
+    const declared = Number(response.headers.get("content-length") ?? "");
+    return Number.isFinite(declared) && declared > limit;
+  } catch {
+    return false;
+  }
+}
+
 export default function DishViewer({
   name,
   dish,
@@ -217,6 +238,20 @@ export default function DishViewer({
         renderer.dispose();
         if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement);
       };
+
+      // A cheaper gate than the loader: if the host tells us the file is
+      // enormous (or says nothing — CORS hides the size more often than not),
+      // behave accordingly. The server caps models at 40 MB; a phone on 4G
+      // shouldn't start pulling one that ignores that.
+      const tooLarge = await headTooLarge(model.glb, MAX_MODEL_BYTES);
+      if (cancelled) return;
+      if (tooLarge) {
+        setStage("error");
+        setProblem(
+          "This model is too heavy to load on a phone (over 40 MB). The dish, its price and the rest of the menu are unaffected.",
+        );
+        return;
+      }
 
       const loader = new GLTFLoader();
       loader.load(

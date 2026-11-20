@@ -4,7 +4,8 @@ import { ArrowUpRight, Camera, Pencil, QrCode } from "lucide-react";
 
 import MenuQr from "@/components/menu/MenuQr";
 import MenuCard from "@/components/menu/MenuCard";
-import { BOOKING_URL, MENU_DEMO_URL } from "@/lib/business";
+import { BOOKING_URL, MENU_DEMO_URL, demoMenuUrl } from "@/lib/business";
+import { siteUrl } from "@/lib/site";
 import type { DigitalMenu } from "@/lib/types";
 
 /**
@@ -54,6 +55,11 @@ const WHAT_YOU_GET = [
 ];
 
 export default function MenuDemoPage() {
+  // Absolute, because a QR code has to be scannable from another device. The
+  // configured origin wins; without one, the deployment's own URL is used
+  // rather than a localhost link nobody can reach.
+  const demoUrl = MENU_DEMO_URL || demoMenuUrl(siteUrl);
+
   return (
     <main className="mx-auto w-full max-w-4xl px-4 pt-8 pb-16 sm:px-6 sm:pt-12">
       <div className="max-w-2xl">
@@ -78,10 +84,10 @@ export default function MenuDemoPage() {
               Scan for the menu
             </p>
             <div className="mt-3 flex justify-center">
-              <MenuQr url={MENU_DEMO_URL} />
+              <MenuQr url={demoUrl} />
             </div>
             <p className="mt-3 break-all text-[9.5px] font-medium tracking-[0.01em] text-espresso-400">
-              {MENU_DEMO_URL.replace(/^https?:\/\//, "")}
+              {demoUrl.replace(/^https?:\/\//, "")}
             </p>
           </div>
 

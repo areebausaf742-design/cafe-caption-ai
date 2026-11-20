@@ -66,10 +66,35 @@ export const BOOKING_NOTE = "20 minutes · no slides, no pressure";
  */
 export const MENU_DEMO_PATH = "/menu/demo";
 
-const PUBLIC_SITE_ORIGIN =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "http://localhost:3000";
+/**
+ * The public origin, in the same order `lib/site.ts` resolves it:
+ * explicit → Vercel's own deployment URL → localhost **only in development**.
+ *
+ * It used to end at `http://localhost:3000` unconditionally, which is how a
+ * production demo QR could encode a URL no phone can reach. A missing origin in
+ * production now yields an empty string, and the callers use the page's own
+ * origin instead of printing a lie.
+ */
+const PUBLIC_SITE_ORIGIN = (() => {
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  if (explicit) return explicit;
 
-export const MENU_DEMO_URL = `${PUBLIC_SITE_ORIGIN}${MENU_DEMO_PATH}`;
+  // Vercel exposes the deployment URL as NEXT_PUBLIC_VERCEL_URL, so this works
+  // in the browser as well as on the server.
+  const vercel = process.env.NEXT_PUBLIC_VERCEL_URL?.replace(/\/$/, "");
+  if (vercel) return vercel.startsWith("http") ? vercel : `https://${vercel}`;
+
+  return process.env.NODE_ENV === "development" ? "http://localhost:3000" : "";
+})();
+
+/** The demo menu link, on the configured origin or on `origin` when given. */
+export function demoMenuUrl(origin?: string): string {
+  const base = (origin ?? PUBLIC_SITE_ORIGIN).replace(/\/$/, "");
+  return `${base}${MENU_DEMO_PATH}`;
+}
+
+/** Build-time value; empty when this deployment hasn't been told its origin. */
+export const MENU_DEMO_URL = demoMenuUrl();
 
 /** Build a WhatsApp deep link with a pre-filled message. */
 export function whatsappUrl(message: string): string {
