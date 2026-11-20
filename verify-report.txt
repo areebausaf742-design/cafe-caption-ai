@@ -1,0 +1,18 @@
+
+Verifying https://cafe-caption-ai.vercel.app
+
+PASS  1      site responds                        GET / → 200
+PASS  2      menu publish (server write)          201, slug "rollout-check-2"
+PASS  3      public menu read                     GET /menu/rollout-check-2 → 200, café name rendered
+PASS  4      edit-with-key read                   GET /api/menus/rollout-check-2 → 200
+PASS  4      edit-with-key save (unpublish)       PATCH /api/menus/rollout-check-2 → 200
+PASS  4      unpublished menu is not public       GET /menu/rollout-check-2 → 404 (expected 404)
+PASS  5      lead storage (server write)          POST /api/leads → 200, stored=true
+SKIP  6      anon INSERT refused (leads, menus)   no public Supabase credentials in the environment — run npm run check:prod with SUPABASE_URL + SUPABASE_ANON_KEY
+
+7 passed, 0 failed, 1 skipped
+
+Cleanup (service role / SQL editor), both rows are inert and non-public:
+  delete from public.menus where slug = 'rollout-check-2';
+  delete from public.leads where name = 'Rollout Check' and source = 'cafe-caption';
+
