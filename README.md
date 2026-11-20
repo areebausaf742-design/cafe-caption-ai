@@ -361,10 +361,23 @@ isolate, so a module-scope `Map` is only a per-instance counter — a burst spre
 across cold starts walks straight past it, which is exactly the abuse that costs
 money upstream. Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
 (free tier) and the limiter runs a fixed window in Redis over its REST API — no
-SDK, one `fetch`, `INCR` + `PEXPIRE NX` + `PTTL` in a single pipeline. Without
-them, or during a Redis outage, it degrades to the in-memory map and logs once
-(`[rate-limit] Upstash unavailable`): a broken counter is never the reason a
-visitor can't use the studio.
+SDK, one `fetch`, `INCR` + `PEXPIRE NX` + `PTTL` in a single pipeline.
+
+**Fail closed where it costs money, open where it doesn't.** The two cases are
+not symmetric, so they don't behave the same way:
+
+| Redis | Paid routes (`generate`, `translate`, `dish-vision`, `dish-model`) | Free routes (`leads`, publish, edit) |
+| --- | --- | --- |
+| not configured | in-memory map, one `console.warn` | in-memory map |
+| configured, unreachable | **`503 RATE_LIMIT_UNAVAILABLE`**, `retryAfter: 30` | in-memory map |
+
+A per-instance counter under a limit of six isn't a limit once a burst can spread
+across isolates — an unmetered paid endpoint is worse than half a minute of
+honest downtime. The free routes keep the fallback, because a broken counter must
+never be the reason a visitor can't save a menu. The 503 is distinguishable from
+the 429 on purpose: nothing about the caller's usage is wrong. So the paid routes
+should have Upstash configured; without it they still work, but the numbers only
+hold per instance.
 
 ### Google Local SEO prompts (`app/api/generate/prompts.ts`)
 

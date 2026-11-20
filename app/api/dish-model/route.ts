@@ -29,7 +29,13 @@ export const dynamic = "force-dynamic";
 /** A cold ZeroGPU Space plus a TripoSR pass can take a couple of minutes. */
 export const maxDuration = 300;
 
-const LIMIT = { namespace: "dish-model", max: 6, windowMs: 30 * 60 * 1000 };
+const LIMIT = {
+  namespace: "dish-model",
+  max: 6,
+  windowMs: 30 * 60 * 1000,
+  // Paid route (free-tier GPU minutes, which are the scarcest budget here).
+  failClosed: true,
+};
 
 /** 4 MB of base64 is ~3 MB of JPEG — the compressor's ceiling, with slack. */
 const MAX_BODY_BYTES = 4_500_000;
@@ -51,6 +57,14 @@ export async function POST(request: Request) {
   const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
+    if (rate.unavailable) {
+      return withRateHeaders(
+        fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+          retryAfter: rate.retryAfter,
+        }),
+        rate,
+      );
+    }
     return withRateHeaders(
       fail(429, "That's a lot of models at once. Give it a few minutes.", "RATE_LIMITED", {
         retryAfter: rate.retryAfter,
@@ -136,6 +150,14 @@ export async function POST(request: Request) {
   // 4. Everything checks out — spend one token of the budget and generate.
   const spent = await rateLimit(request, LIMIT);
   if (!spent.allowed) {
+    if (spent.unavailable) {
+      return withRateHeaders(
+        fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+          retryAfter: spent.retryAfter,
+        }),
+        spent,
+      );
+    }
     return withRateHeaders(
       fail(429, "That's a lot of models at once. Give it a few minutes.", "RATE_LIMITED", {
         retryAfter: spent.retryAfter,
