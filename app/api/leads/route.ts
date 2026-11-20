@@ -1,75 +1,33 @@
 /**
  * Lead intake for the "Tell me about your café" form.
  *
- * Leads are stored in Supabase when SUPABASE_URL + SUPABASE_ANON_KEY are set
- * (see supabase/schema.sql). If they aren't configured yet, the request still
- * succeeds so the visitor is never shown an error — the UI then offers a
- * one-tap WhatsApp handoff so no enquiry is lost.
+ * The row is written by the **service role** only (see `lib/lead-store.ts`):
+ * `anon` has no INSERT grant on `public.leads` any more, so a request that can't
+ * reach a configured server store answers 503 instead of writing with a public
+ * key. The form is deliberately fire-and-forget — it opens WhatsApp in the same
+ * user gesture and never inspects this response — so no visitor-visible error is
+ * introduced by that. The enquiry still arrives; what changes is that we no
+ * longer claim it was stored when it wasn't.
  */
 import "server-only";
 
 import { NextResponse } from "next/server";
 
+import { storeLead } from "@/lib/lead-store";
 import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
-import { validateLead, type LeadDraft } from "@/lib/leads";
+import { validateLead } from "@/lib/leads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, "");
-const SUPABASE_KEY =
-  process.env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_PUBLISHABLE_KEY;
-const TABLE = process.env.SUPABASE_LEADS_TABLE || "leads";
 
 const LIMIT = { namespace: "leads", max: 6, windowMs: 10 * 60 * 1000 };
 
 /** Four short answers. 16 KB is already an order of magnitude more than that. */
 const MAX_BODY_BYTES = 16_384;
 
-/** A slow Supabase must not hold the function open until Vercel kills it. */
-const SUPABASE_TIMEOUT_MS = 5_000;
-
-async function storeLead(
-  lead: LeadDraft,
-  pageUrl: string | null,
-): Promise<boolean> {
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.warn(
-      "[leads] Supabase is not configured — lead not stored. Set SUPABASE_URL and SUPABASE_ANON_KEY.",
-    );
-    return false;
-  }
-
-  try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: JSON.stringify({
-        ...lead,
-        source: "cafe-caption",
-        page_url: pageUrl,
-      }),
-      signal: AbortSignal.timeout(SUPABASE_TIMEOUT_MS),
-    });
-
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      console.error("[leads] Supabase insert failed:", response.status, detail);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("[leads] Supabase request failed:", error);
-    return false;
-  }
-}
+/** The body is created once so the two exits can't drift apart. */
+const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 export async function POST(request: Request) {
   // 1. Peek: a malformed enquiry must not eat one of the six attempts.
@@ -133,18 +91,27 @@ export async function POST(request: Request) {
   const pageUrl = request.headers.get("referer")?.slice(0, 300) ?? null;
   const stored = await storeLead(result.value, pageUrl);
 
+  if (!stored.stored) {
+    // Honest about the write, not about the visitor's experience: the WhatsApp
+    // tab has already opened from the same click, and `channel` says so.
+    return withRateHeaders(
+      NextResponse.json(
+        {
+          error:
+            "Your enquiry couldn't be saved here — please send it on WhatsApp, where the message is already written.",
+          code: "STORE_UNAVAILABLE",
+          channel: "whatsapp",
+        },
+        { status: 503, headers: NO_STORE },
+      ),
+      spent,
+    );
+  }
+
   return withRateHeaders(
     NextResponse.json(
-      {
-        ok: true,
-        stored,
-        // Set on the server so the UI can log which channel was configured.
-        channel: stored ? "supabase" : "whatsapp",
-      },
-      {
-        status: 200,
-        headers: { "Cache-Control": "no-store" },
-      },
+      { ok: true, stored: true, channel: "supabase" },
+      { status: 200, headers: NO_STORE },
     ),
     spent,
   );

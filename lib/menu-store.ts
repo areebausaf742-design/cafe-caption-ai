@@ -1,11 +1,17 @@
 /**
  * Hosted-menu storage: Supabase's REST API, no SDK.
  *
- * Reads and writes go through the three SQL functions in `supabase/schema.sql`
- * rather than touching the table, because the table has no `select`/`update`
- * privilege for the anon key at all. The route computes the key's hash and the
- * database compares strings — so the key never leaves the owner's browser, and
- * a database dump hands out no editing rights.
+ * Reads use the public capability key and go through the three SQL functions in
+ * `supabase/schema.sql` rather than touching the table, because the table has no
+ * `select`/`update` privilege for `anon` at all. The route computes the edit
+ * key's hash and the database compares strings — so the key never leaves the
+ * owner's browser, and a database dump hands out no editing rights.
+ *
+ * The one direct table write is the INSERT that publishes a new menu, and that
+ * runs as the **service role** (`SUPABASE_SERVICE_ROLE_KEY`): `anon` no longer
+ * has INSERT on `public.menus`, so this is the only path that can create a row.
+ * If the key is missing there is no fallback — `createMenuRecord` throws and the
+ * route answers 503.
  *
  * Everything here throws on an upstream failure and returns `null` for "not
  * found", so callers can tell a 404 from an outage.
@@ -13,37 +19,34 @@
 import "server-only";
 
 import type { MenuDoc, MenuDraft } from "@/lib/menu";
-
-const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, "");
-const SUPABASE_KEY =
-  process.env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_PUBLISHABLE_KEY;
+import {
+  readHeaders,
+  supabaseEndpoint,
+  supabaseReadConfigured,
+  supabaseWriteConfigured,
+  writeHeaders,
+} from "@/lib/supabase-config";
 
 /** A slow database must not hold the function open until Vercel kills it. */
 const TIMEOUT_MS = 5_000;
 
+/** Reads: public pages and the capability-key edit endpoints. */
 export function menuStoreConfigured(): boolean {
-  return Boolean(SUPABASE_URL && SUPABASE_KEY);
+  return supabaseReadConfigured();
 }
 
-function headers(): Record<string, string> {
-  return {
-    apikey: SUPABASE_KEY as string,
-    Authorization: `Bearer ${SUPABASE_KEY}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
+/** Writes: publishing a new menu, which only the service role may do. */
+export function menuWriteConfigured(): boolean {
+  return supabaseWriteConfigured();
 }
 
-function endpoint(path: string): string {
-  if (!SUPABASE_URL) throw new Error("SUPABASE_URL is not configured");
-  return `${SUPABASE_URL}${path}`;
-}
+const endpoint = supabaseEndpoint;
 
 /** Call a SQL function. Returns the decoded JSON body (which may be `null`). */
 async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T | null> {
   const response = await fetch(endpoint(`/rest/v1/rpc/${name}`), {
     method: "POST",
-    headers: headers(),
+    headers: readHeaders(),
     body: JSON.stringify(args),
     cache: "no-store",
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -60,8 +63,12 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T | 
 }
 
 /**
- * Insert a published menu. `Prefer: return=minimal` keeps the response small —
- * the caller already knows everything it just wrote.
+ * Insert a published menu, as the service role. `Prefer: return=minimal` keeps
+ * the response small — the caller already knows everything it just wrote.
+ *
+ * Throws when the write key is absent. That is intentional: `anon` has no INSERT
+ * grant on `public.menus` any more, so a fallback would only produce a confusing
+ * 401 from PostgREST instead of an honest "not configured".
  */
 export async function createMenuRecord(
   slug: string,
@@ -70,7 +77,7 @@ export async function createMenuRecord(
 ): Promise<void> {
   const response = await fetch(endpoint("/rest/v1/menus"), {
     method: "POST",
-    headers: { ...headers(), Prefer: "return=minimal" },
+    headers: { ...writeHeaders(), Prefer: "return=minimal" },
     body: JSON.stringify({
       slug,
       cafe_name: menu.cafeName,

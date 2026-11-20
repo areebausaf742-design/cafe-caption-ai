@@ -56,6 +56,7 @@ npm run dev                  # http://localhost:3000
 | `npm test` | Unit tests (Vitest, `tests/**/*.test.ts`) |
 | `npm run test:watch` | The same, in watch mode while you edit |
 | `npm run check:contrast` | WCAG AA check on every text colour the UI uses |
+| `npm run check:prod` | Probe a deployment: rate-limit fail-closed behaviour (no quota spent) and that `anon` can no longer INSERT |
 
 ### Package manager and dependencies
 
@@ -200,28 +201,48 @@ while it runs inside the same user gesture, so nothing may sit between the click
 and the tab. It uses `keepalive: true`, and a failure changes nothing the visitor
 sees. `app/privacy` says all of this in the same words.
 
-To actually keep the copy, two minutes of setup:
+To actually keep the copy, ten minutes of setup:
 
 1. Run **`supabase/schema.sql`** in Supabase → SQL Editor. It creates
-   `public.leads` with insert-only RLS (no public reads).
+   `public.leads` and `public.menus` with RLS on, **no INSERT privilege for
+   `anon`**, and the three capability-key functions.
 2. Add to your environment:
 
 ```bash
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_ANON_KEY=<anon or publishable key>
+SUPABASE_ANON_KEY=<anon or publishable key>      # reads + capability RPCs
+SUPABASE_SERVICE_ROLE_KEY=<service_role key>     # writes only, server only
 # SUPABASE_LEADS_TABLE=leads
 ```
 
-The same two variables also switch on **hosted menus** (`/menu/[slug]`), which
+**Two keys, two jobs, no fallback.** The publishable key reaches browsers (the
+public menu page needs it), so nothing it can do may be write access. Every
+INSERT — the lead row, the published menu — is done server-side with
+`SUPABASE_SERVICE_ROLE_KEY`, which bypasses RLS and is never prefixed
+`NEXT_PUBLIC_*`, never logged, and never imported by client code. `lib/supabase-config.ts`
+holds both reads and refuses `writeHeaders()` when the service key is missing,
+when it is byte-identical to the publishable key, or when its JWT `role` claim is
+not `service_role` — the three ways a "server write" silently becomes an anon
+write. A refuse means **503**: `/api/leads` returns `STORE_UNAVAILABLE` and
+`/api/menus` returns `PUBLISHING_DISABLED`. There is deliberately no
+`SERVICE_ROLE ?? ANON` expression anywhere in the codebase.
+
+Upgrading an existing database (one that was created before this): run
+`supabase/migrations/20261114120000_lock_anon_inserts.sql` **after** the
+deployment that has the service key is live — it revokes INSERT on both tables,
+drops `leads_insert_only` and `menus_insert_only`, keeps RLS on, and re-asserts
+the `menu_public` / `menu_read` / `menu_save` grants so public pages and the
+capability-key editor are untouched. Then `npm run check:prod` proves it: it
+attempts a direct anon INSERT into both tables and expects a refusal.
+
+The same three variables also switch on **hosted menus** (`/menu/[slug]`), which
 need the `menus` half of the same schema file. A published menu with a WhatsApp
 number gets cart ordering automatically — the number is stored dialled, with the
-country code, so the `wa.me` link actually opens. Without them the form still
-submits successfully and the visitor is shown a
-one-tap **“Send it on WhatsApp”** handoff instead of an error — the API returns
-`{ ok: true, stored: false }` and the server log says
-`[leads] Supabase is not configured`. So the wiring is live today and starts
-keeping records the moment the two variables exist; nothing in the client has to
-change.
+country code, so the `wa.me` link actually opens. Without them the form still opens WhatsApp with every answer already written —
+the client is fire-and-forget and never reads the response — but the API answers
+`503 STORE_UNAVAILABLE` rather than pretending the row was saved. The server log
+names the missing variable once (`[supabase] SUPABASE_SERVICE_ROLE_KEY is not
+set`), never a value.
 
 Enquiries store: name, café, city, WhatsApp, email, interest, message, source and
 referring page. Read them in the Supabase table editor:
@@ -1104,8 +1125,10 @@ only file that imports framer-motion apart from `MotionRoot` and the copy button
 1. Push the repo to GitHub and import it at [vercel.com/new](https://vercel.com/new).
 2. Add `GEMINI_API_KEY` and `NEXT_PUBLIC_SITE_URL`. Strongly recommended:
    `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (shared rate limits) and
-   `SUPABASE_URL` + `SUPABASE_ANON_KEY` (lead storage). Without the last pair the
-   quote form still works, it just doesn't keep a record.
+   `SUPABASE_URL` + `SUPABASE_ANON_KEY` + `SUPABASE_SERVICE_ROLE_KEY`
+   (lead storage and publishing — **mark that last one Sensitive**, it must never
+   be readable by a client). Without it, publishing and lead storage answer 503
+   instead of writing with the publishable key.
    If the site sits behind **your own** proxy rather than Vercel's edge, set
    `TRUST_PROXY=1` so the rate limiter sees real client IPs — and only then,
    because it states that the proxy overwrites `x-real-ip`/`x-forwarded-for`.
