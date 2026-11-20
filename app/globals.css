@@ -44,6 +44,17 @@
     overflow-x: clip;
   }
 
+  /* Second line of defence, and the one that actually stops the *viewport* from
+     scrolling sideways: `overflow-x` on the root is propagated to the viewport.
+     Guarded by @supports because `clip` (unlike `hidden`) does not create a
+     scroll container, which is what keeps the sticky header sticky — on browsers
+     without it, the body rule above still covers everything inside the page. */
+  @supports (overflow: clip) {
+    html {
+      overflow-x: clip;
+    }
+  }
+
   /* Warm, layered light: amber steam top-left, cocoa shadow bottom-right.
      A genuinely fixed *layer* rather than `background-attachment: fixed`: the
      old way makes the browser repaint the full viewport on every scroll frame
@@ -155,9 +166,14 @@
   /* --------------------------------------------------------------- typography */
 
   /* Small caps section eyebrow with a hairline rule */
+  /* The hero eyebrow is a full sentence. Uppercase + 0.2em tracking made it
+     ~390px wide at 10px, i.e. wider than a 375px phone's content box, so it used
+     to be clipped at both ends. It now wraps (and tightens a touch on phones)
+     instead of leaning out of the page. */
   .label {
-    @apply inline-flex items-center gap-2.5 text-[10px] font-semibold uppercase
-      tracking-[0.2em] text-espresso-500 sm:text-[10.5px];
+    @apply inline-flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1
+      text-center text-[10px] font-semibold uppercase tracking-[0.14em]
+      text-espresso-500 sm:text-[10.5px] sm:tracking-[0.2em];
   }
   .label::before {
     content: "";

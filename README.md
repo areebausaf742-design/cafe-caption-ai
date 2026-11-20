@@ -84,6 +84,11 @@ New behaviour that can be judged from inputs alone belongs in `tests/`. Anything
 that needs a real request belongs in the manual checklist at the end of this
 file.
 
+`tests/tap-targets.test.ts` is a structural guard rather than a unit test: every
+`<input type="file">` in the app must be a full-size transparent overlay on its
+own label (never `sr-only` next to a button), because a 1×1 input is a tap
+target that phones — and tap-target audits — cannot hit.
+
 ---
 
 ## Configuration
