@@ -49,7 +49,7 @@ npm run dev                  # http://localhost:3000
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Dev server on port 3000 |
-| `npm run build` | Production build (`NODE_ENV=production next build`) |
+| `npm run build` | Production build (`cross-env NODE_ENV=production next build`) |
 | `npm run start` | Serve the production build |
 | `npm run lint` | ESLint (`next/core-web-vitals`) |
 | `npm run typecheck` | TypeScript, no emit |
@@ -59,6 +59,10 @@ npm run dev                  # http://localhost:3000
 
 ### Package manager and dependencies
 
+- **Node 20 or newer** (`engines.node`). The build script sets `NODE_ENV` through
+  `cross-env`, so `npm run build` works in Windows `cmd`/PowerShell as well as a
+  POSIX shell — `NODE_ENV=production next build` is a syntax error in the former.
+  `cross-env` requires Node 20+, which is also what the deployment runtime uses.
 - **One lockfile: `package-lock.json`, one tool: `npm`.** `npm ci` installs exactly
   the locked tree; anything else (yarn, pnpm, bun) will silently produce a
   different tree and break the lockfile discipline the CI relies on.
