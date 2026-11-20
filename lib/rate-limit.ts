@@ -9,6 +9,18 @@ export interface RateLimitOptions {
   namespace: string;
   max: number;
   windowMs: number;
+  /**
+   * True for the routes that spend money upstream (Gemini tokens, GPU seconds).
+   *
+   * When Upstash is configured but not answering, these **fail closed**: the
+   * request is refused rather than metered by a per-instance map that an
+   * attacker can walk around with a few parallel cold starts. An unmetered paid
+   * endpoint is worse than a 30-second outage.
+   *
+   * When Upstash isn't configured at all there is nothing to fail over from, so
+   * the in-memory map is used (and a warning is logged once).
+   */
+  failClosed?: boolean;
 }
 
 export interface RateLimitResult {
@@ -19,6 +31,12 @@ export interface RateLimitResult {
   resetAt: number;
   /** Seconds until the client may retry. */
   retryAfter: number;
+  /**
+   * True when the request was refused because the *shared* limiter was down,
+   * not because the caller ran out of budget. Routes turn this into a 503 with
+   * `RATE_LIMIT_UNAVAILABLE` instead of a 429.
+   */
+  unavailable?: boolean;
 }
 
 /**
@@ -32,25 +50,51 @@ export interface RateLimitResult {
  * So: Upstash Redis over its REST API when `UPSTASH_REDIS_REST_URL` and
  * `UPSTASH_REDIS_REST_TOKEN` are set (no SDK, no extra dependency, one `fetch`),
  * and the in-memory map — correct for local dev and a single long-lived server —
- * when they aren't. A Redis outage degrades to the map rather than failing the
- * request: a broken counter must never be the reason a visitor can't use the
- * studio.
+ * when they aren't.
+ *
+ * What happens when Redis *is* configured but doesn't answer depends on what the
+ * request costs. Routes that only touch our own database or CPU (`leads`,
+ * `menu-publish`, the edit endpoints) degrade to the map: a broken counter must
+ * never be the reason a visitor can't save a menu. Routes that spend money
+ * upstream pass `failClosed: true` and get a 503 instead, because a per-instance
+ * counter under a limit of six is not a limit at all once an attacker can spread
+ * across isolates. Failing closed costs a little availability; failing open
+ * costs the API budget and, on the GPU Space, the queue.
  */
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, "");
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+/** Whether a shared limiter is *supposed* to exist. */
+const SHARED_CONFIGURED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
+
+/** How long a fail-closed route asks the client to wait during an outage. */
+const UNAVAILABLE_RETRY_SECONDS = 30;
 
 /** A slow Redis must not hold a request open. */
 const REDIS_TIMEOUT_MS = 1_500;
 
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
-let warned = false;
+let warnedOutage = false;
 function warnOnce(reason: unknown) {
-  if (warned) return;
-  warned = true;
+  if (warnedOutage) return;
+  warnedOutage = true;
   console.warn(
-    "[rate-limit] Upstash unavailable — falling back to per-instance limits.",
+    "[rate-limit] Upstash unavailable — paid routes will refuse until it recovers; other routes fall back to per-instance limits.",
     reason,
+  );
+}
+
+let warnedLocalOnly = false;
+/**
+ * Paid routes would like a shared limiter. If this deployment has none, say so
+ * once: the numbers below still apply, but only per instance.
+ */
+function warnLocalOnly(namespace: string) {
+  if (warnedLocalOnly) return;
+  warnedLocalOnly = true;
+  console.warn(
+    `[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN are not set — "${namespace}" is limited per instance only. Set them to enforce these limits across deployments.`,
   );
 }
 
@@ -135,6 +179,24 @@ function summarise(
     remaining: Math.max(0, max - count),
     resetAt: Math.ceil((now + window) / 1000),
     retryAfter: Math.max(1, Math.ceil(window / 1000)),
+  };
+}
+
+/**
+ * The answer when a paid route has no shared limiter to trust.
+ *
+ * Deliberately *not* a 429: nothing about the caller's usage is wrong. The
+ * route turns `unavailable` into a 503 and tells the client to come back in
+ * half a minute, which is the truth.
+ */
+function unavailable(options: RateLimitOptions, now: number): RateLimitResult {
+  return {
+    allowed: false,
+    limit: options.max,
+    remaining: 0,
+    resetAt: Math.ceil((now + UNAVAILABLE_RETRY_SECONDS * 1000) / 1000),
+    retryAfter: UNAVAILABLE_RETRY_SECONDS,
+    unavailable: true,
   };
 }
 
@@ -272,6 +334,12 @@ export async function peekRateLimit(
   const shared = await redisWindow(request, options, false, now);
   if (shared) return shared;
 
+  if (options.failClosed) {
+    // Configured but not answering: refuse rather than guess.
+    if (SHARED_CONFIGURED) return unavailable(options, now);
+    warnLocalOnly(options.namespace);
+  }
+
   const bucket = readBucket(request, options, now);
   return summarise(bucket.count, options, now, false, bucket.resetAt - now);
 }
@@ -290,6 +358,11 @@ export async function rateLimit(
 
   const shared = await redisWindow(request, options, true, now);
   if (shared) return shared;
+
+  if (options.failClosed) {
+    if (SHARED_CONFIGURED) return unavailable(options, now);
+    warnLocalOnly(options.namespace);
+  }
 
   const bucket = readBucket(request, options, now);
   bucket.count += 1;

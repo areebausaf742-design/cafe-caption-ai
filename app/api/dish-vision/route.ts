@@ -49,7 +49,13 @@ const FALLBACK_MODEL = GEMINI_FALLBACK_MODEL;
 const MAX_BODY_BYTES = 4_000_000;
 
 /** Reading a photo is a real model call, so it's metered like one. */
-const LIMIT = { namespace: "dish-vision", max: 8, windowMs: 10 * 60 * 1000 };
+const LIMIT = {
+  namespace: "dish-vision",
+  max: 8,
+  windowMs: 10 * 60 * 1000,
+  // Paid route (Gemini vision tokens).
+  failClosed: true,
+};
 
 const TIMEOUT_MS = 25_000;
 
@@ -179,6 +185,12 @@ export async function POST(request: Request) {
   const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
+    if (rate.unavailable) {
+      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        rate,
+        retryAfter: rate.retryAfter,
+      });
+    }
     return fail(429, "That's a lot of photos. Try again in a few minutes.", "RATE_LIMITED", {
       rate,
     });
@@ -226,6 +238,12 @@ export async function POST(request: Request) {
   // 5. Validated. Spend one token, then call the model.
   const spent = await rateLimit(request, LIMIT);
   if (!spent.allowed) {
+    if (spent.unavailable) {
+      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        rate: spent,
+        retryAfter: spent.retryAfter,
+      });
+    }
     return fail(429, "That's a lot of photos. Try again in a few minutes.", "RATE_LIMITED", {
       rate: spent,
       retryAfter: spent.retryAfter,

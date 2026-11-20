@@ -53,7 +53,13 @@ const MAX_BODY_BYTES = 32_000;
 const CHUNK_SIZE = 40;
 
 /** A translate is a smaller job than a menu photo, but not free. */
-const LIMIT = { namespace: "menu-translate", max: 6, windowMs: 10 * 60 * 1000 };
+const LIMIT = {
+  namespace: "menu-translate",
+  max: 6,
+  windowMs: 10 * 60 * 1000,
+  // Paid route (Gemini tokens).
+  failClosed: true,
+};
 
 const CHUNK_TIMEOUT_MS = 20_000;
 
@@ -242,6 +248,12 @@ export async function POST(request: Request) {
   const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
+    if (rate.unavailable) {
+      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        rate,
+        retryAfter: rate.retryAfter,
+      });
+    }
     return fail(
       429,
       "That's a lot of translating. Try again in a few minutes.",
@@ -309,6 +321,12 @@ export async function POST(request: Request) {
   // 4. Validated. Spend a token and translate.
   const spent = await rateLimit(request, LIMIT);
   if (!spent.allowed) {
+    if (spent.unavailable) {
+      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        rate: spent,
+        retryAfter: spent.retryAfter,
+      });
+    }
     return fail(
       429,
       "That's a lot of translating. Try again in a few minutes.",

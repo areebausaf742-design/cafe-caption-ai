@@ -162,7 +162,13 @@ const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const PHOTO_RATE_LIMIT_MAX = 6;
 
 /** Requests allowed per IP inside the window. */
-const LIMIT = { namespace: "generate", max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW_MS };
+const LIMIT = {
+  namespace: "generate",
+  max: RATE_LIMIT_MAX,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  // Paid route (Gemini tokens): no shared limiter means no budget we can trust.
+  failClosed: true,
+};
 
 /**
  * Hard ceiling on the request body.
@@ -181,6 +187,8 @@ const PHOTO_LIMIT = {
   namespace: "generate-photo",
   max: PHOTO_RATE_LIMIT_MAX,
   windowMs: RATE_LIMIT_WINDOW_MS,
+  // Paid route too: every photo is a vision call.
+  failClosed: true,
 };
 
 /* -------------------------------------------------------------------------- */
@@ -660,6 +668,12 @@ export async function POST(request: Request) {
   //    the visitor one of their generations.
   let rate = await peekRateLimit(request, LIMIT);
   if (!rate.allowed) {
+    if (rate.unavailable) {
+      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        retryAfter: rate.retryAfter,
+        rate,
+      });
+    }
     return fail(
       429,
       "You've generated a lot of copy in the last 10 minutes. Take a coffee break and try again shortly.",
@@ -837,6 +851,12 @@ export async function POST(request: Request) {
   if (photo) {
     const photoRate = await rateLimit(request, PHOTO_LIMIT);
     if (!photoRate.allowed) {
+      if (photoRate.unavailable) {
+        return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+          retryAfter: photoRate.retryAfter,
+          rate,
+        });
+      }
       return fail(
         429,
         `That's ${PHOTO_RATE_LIMIT_MAX} photo requests in 10 minutes — the limit for now. Try again shortly, or describe the photo in words instead.`,
