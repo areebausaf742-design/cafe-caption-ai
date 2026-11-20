@@ -90,8 +90,10 @@ export default function LeadForm() {
     const cafeName = form.cafeName.trim();
     const city = form.city.trim();
 
-    if (!name || !cafeName || !city) {
-      setError("Add your name, café and city so I can reply properly.");
+    // Matches lib/leads.ts: two characters is the minimum the API will store,
+    // so the form says so here rather than letting the server reject it.
+    if (name.length < 2 || cafeName.length < 2 || city.length < 2) {
+      setError("Add your name, café and city (at least two letters each) so I can reply properly.");
       return;
     }
 

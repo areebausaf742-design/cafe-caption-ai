@@ -27,7 +27,12 @@ import {
 } from "@google/generative-ai";
 
 import { readDishReading } from "@/lib/dish";
-import { rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
+import { GEMINI_FALLBACK_MODEL, GEMINI_PRIMARY_MODEL, thinkingConfigFor } from "@/lib/gemini-config";
+import { BlockedReply, blockReason, isRetryable } from "@/lib/gemini-retry";
+import { parsePhoto } from "@/lib/image-validate";
+import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
+import { readJsonWithLimit } from "@/lib/request-body";
+import { extractJsonObject } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,9 +42,8 @@ export const maxDuration = 45;
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
-const FALLBACK_MODEL =
-  process.env.GEMINI_FALLBACK_MODEL?.trim() || "gemini-3.5-flash-lite";
+const MODEL = GEMINI_PRIMARY_MODEL;
+const FALLBACK_MODEL = GEMINI_FALLBACK_MODEL;
 
 /** A dish photo is small after the browser downscales it; this is a guard. */
 const MAX_BODY_BYTES = 4_000_000;
@@ -48,8 +52,6 @@ const MAX_BODY_BYTES = 4_000_000;
 const LIMIT = { namespace: "dish-vision", max: 8, windowMs: 10 * 60 * 1000 };
 
 const TIMEOUT_MS = 25_000;
-
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const SYSTEM = `You look at a single photograph of one dish or drink from an Indian café, and help the owner describe it on their menu.
 
@@ -98,37 +100,29 @@ function fail(
   status: number,
   error: string,
   code: string,
-  extra?: { rate?: RateLimitResult; hint?: string },
+  extra?: { rate?: RateLimitResult; hint?: string; retryAfter?: number },
 ) {
   const response = NextResponse.json(
-    { error, code, ...(extra?.hint ? { hint: extra.hint } : {}) },
+    {
+      error,
+      code,
+      ...(extra?.hint ? { hint: extra.hint } : {}),
+      ...(extra?.retryAfter ? { retryAfter: extra.retryAfter } : {}),
+    },
     { status },
   );
+  if (extra?.retryAfter) response.headers.set("Retry-After", String(extra.retryAfter));
   return extra?.rate ? withRateHeaders(response, extra.rate) : response;
 }
 
-function extractJson(raw: string): unknown {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Model reply contained no JSON object.");
-    }
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
 
 async function readPhoto(image: { mimeType: string; data: string }, key: string) {
   const client = new GoogleGenerativeAI(key);
 
   for (const model of [MODEL, FALLBACK_MODEL]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
     try {
       const generativeModel = client.getGenerativeModel({
         model,
@@ -137,20 +131,29 @@ async function readPhoto(image: { mimeType: string; data: string }, key: string)
           responseSchema: SCHEMA,
           temperature: 0.3,
           maxOutputTokens: 1024,
+          // 2.5 models otherwise spend part of the output budget thinking,
+          // which is how a JSON reading comes back truncated.
+          ...thinkingConfigFor(model),
         },
       });
 
-      const response = await Promise.race([
-        generativeModel.generateContent([
+      // A real abort, not a Promise.race: the request is cancelled, so the
+      // function returns now instead of holding the socket open until Gemini
+      // answers into nobody's hands.
+      const response = await generativeModel.generateContent(
+        [
           { text: SYSTEM },
           { inlineData: { mimeType: image.mimeType, data: image.data } },
-        ]),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`timeout after ${TIMEOUT_MS}ms`)), TIMEOUT_MS),
-        ),
-      ]);
+        ],
+        { signal: controller.signal },
+      );
 
-      const dish = readDishReading(extractJson(response.response.text()));
+      const blocked = blockReason(response.response);
+      if (blocked) throw new BlockedReply(blocked);
+
+      const dish = readDishReading(
+        extractJsonObject(response.response.text(), "Model reply contained no JSON object."),
+      );
       if (!dish) throw new Error("Model reply had no usable dish.");
 
       return { dish, model };
@@ -159,6 +162,11 @@ async function readPhoto(image: { mimeType: string; data: string }, key: string)
       console.warn(
         `[dish-vision] ${model} failed: ${error instanceof Error ? error.message.slice(0, 160) : "unknown"}`,
       );
+      // A wrong key, a model this key can't use, or a safety block: the next
+      // model will fail identically, so stop and report honestly.
+      if (!isRetryable(error)) throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -166,7 +174,9 @@ async function readPhoto(image: { mimeType: string; data: string }, key: string)
 }
 
 export async function POST(request: Request) {
-  const rate = await rateLimit(request, LIMIT);
+  // 1. Peek at the budget. Nothing below this line may spend a token until the
+  //    request has proved it is one we can actually serve.
+  const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
     return fail(429, "That's a lot of photos. Try again in a few minutes.", "RATE_LIMITED", {
@@ -174,11 +184,19 @@ export async function POST(request: Request) {
     });
   }
 
-  const declared = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    return fail(413, "That photo is too large. Try a smaller one.", "REQUEST_TOO_LARGE", { rate });
+  // 2. The body, streamed, so a chunked oversized upload is refused rather than
+  //    buffered.
+  const parsed = await readJsonWithLimit(request, MAX_BODY_BYTES, {
+    tooLarge: "That photo is too large. Try a smaller one.",
+    invalid: "No photo arrived.",
+  });
+
+  if (!parsed.ok) {
+    return fail(parsed.status, parsed.message, parsed.code, { rate });
   }
 
+  // 3. Configuration: a missing key is a deployment problem, not the visitor's,
+  //    and it must not cost them a photo request.
   if (!apiKey) {
     return fail(
       503,
@@ -188,31 +206,37 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  // 4. The photo itself — format, real base64, matching file signature.
+  const image = (parsed.body as { image?: unknown } | null)?.image;
+  const photo = parsePhoto(image);
+
+  if (!photo.ok) {
+    if (photo.status === 413) {
+      return fail(413, "That photo is too large. Try a smaller one.", "REQUEST_TOO_LARGE", {
+        rate,
+      });
+    }
+    return fail(photo.status, photo.message, "VALIDATION_ERROR", { rate });
+  }
+
+  if (!photo.photo) {
     return fail(400, "No photo arrived.", "VALIDATION_ERROR", { rate });
   }
 
-  const raw = (body as { image?: unknown })?.image;
-  if (typeof raw !== "object" || raw === null) {
-    return fail(400, "No photo arrived.", "VALIDATION_ERROR", { rate });
-  }
-
-  const image = raw as Record<string, unknown>;
-  const mimeType = typeof image.mimeType === "string" ? image.mimeType.toLowerCase() : "";
-  const data = typeof image.data === "string" ? image.data : "";
-
-  if (!ALLOWED_MIME.has(mimeType)) {
-    return fail(400, "That file type can't be read. Use a JPEG, PNG or WebP.", "VALIDATION_ERROR", { rate });
-  }
-  if (data.length < 64 || data.length > MAX_BODY_BYTES) {
-    return fail(400, "That photo doesn't look right. Try another.", "VALIDATION_ERROR", { rate });
+  // 5. Validated. Spend one token, then call the model.
+  const spent = await rateLimit(request, LIMIT);
+  if (!spent.allowed) {
+    return fail(429, "That's a lot of photos. Try again in a few minutes.", "RATE_LIMITED", {
+      rate: spent,
+      retryAfter: spent.retryAfter,
+    });
   }
 
   try {
-    const { dish, model } = await readPhoto({ mimeType, data }, apiKey);
+    const { dish, model } = await readPhoto(
+      { mimeType: photo.photo.mimeType, data: photo.photo.data },
+      apiKey,
+    );
 
     console.info(`[dish-vision] read "${dish.name}" via ${model}`);
 
@@ -221,7 +245,7 @@ export async function POST(request: Request) {
         { ok: true, dish, meta: { model } },
         { status: 200, headers: { "Cache-Control": "no-store" } },
       ),
-      rate,
+      spent,
     );
   } catch (error) {
     console.error(
@@ -231,7 +255,7 @@ export async function POST(request: Request) {
       502,
       "The photo couldn't be read. Type the dish in yourself — nothing is lost.",
       "VISION_FAILED",
-      { rate },
+      { rate: spent },
     );
   }
 }

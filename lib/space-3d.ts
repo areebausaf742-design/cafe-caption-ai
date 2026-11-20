@@ -20,8 +20,30 @@ const SPACE_API = process.env.THREED_SPACE_API?.trim() || "/predict";
 const HF_TOKEN = process.env.HF_TOKEN?.trim();
 const PROVIDER = process.env.THREED_PROVIDER_NAME?.trim() || "triposr";
 
-/** Any one HTTP leg of the conversation. The route owns the overall budget. */
-const LEG_TIMEOUT_MS = 90_000;
+/**
+ * Time budgets, per leg, inside one overall budget.
+ *
+ * The route allows itself 300 s (`maxDuration`); the download then has to be
+ * stored, so the whole conversation is capped at 240 s and each leg gets its own
+ * ceiling — a submit that never answers shouldn't eat the time a slow stream
+ * needs, and a stream that hangs shouldn't leave nothing for the download.
+ */
+const TOTAL_BUDGET_MS = 240_000;
+const SUBMIT_TIMEOUT_MS = 45_000;
+const STREAM_TIMEOUT_MS = 150_000;
+const DOWNLOAD_TIMEOUT_MS = 90_000;
+
+/**
+ * One leg's signal: the overall abort, plus that leg's own timeout. A cancelled
+ * request is what actually stops the upstream work; a `Promise.race` would leave
+ * it running and still holding the socket.
+ */
+function legSignal(controller: AbortController, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return typeof AbortSignal.any === "function"
+    ? AbortSignal.any([controller.signal, timeout])
+    : controller.signal;
+}
 
 export function generatorConfigured(): boolean {
   return Boolean(SPACE_URL);
@@ -94,6 +116,62 @@ function absolute(base: string, candidate: string): string | null {
 
 function authHeaders(): Record<string, string> {
   return HF_TOKEN ? { Authorization: `Bearer ${HF_TOKEN}` } : {};
+}
+
+/**
+ * Where the generated file may actually be downloaded from.
+ *
+ * The Gradio reply is attacker-influenced data: a compromised or impersonated
+ * Space could hand back `https://collect.evil.test/x.glb` and, without this
+ * check, the next line would send `Authorization: Bearer $HF_TOKEN` to it. So a
+ * URL is only usable when it is https, and only on our own Space's origin or a
+ * Hugging Face host — and the token is only ever attached to a same-origin
+ * request.
+ *
+ * Loopback over http is allowed **only** when the Space URL itself is loopback,
+ * which is what a local stub Space (and `npm run dev` testing) needs; the token
+ * still isn't sent there unless it's same-origin.
+ */
+const HF_ORIGIN_SUFFIXES = [".hf.space", ".huggingface.co"];
+
+function isLoopback(hostname: string): boolean {
+  return (
+    hostname === "127.0.0.1" ||
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+export function safeDownloadUrl(
+  base: string,
+  candidate: string,
+): { url: string; sameOrigin: boolean } | null {
+  let space: URL;
+  let target: URL;
+  try {
+    space = new URL(base);
+    target = new URL(candidate);
+  } catch {
+    return null;
+  }
+
+  const httpsOk = target.protocol === "https:";
+  const localHttpOk =
+    target.protocol === "http:" && space.protocol === "http:" && isLoopback(target.hostname);
+  if (!httpsOk && !localHttpOk) return null;
+
+  const sameOrigin = target.origin === space.origin;
+  if (sameOrigin) return { url: target.toString(), sameOrigin: true };
+
+  const host = target.hostname.toLowerCase();
+  const trustedHost =
+    host === "huggingface.co" ||
+    host.endsWith(".huggingface.co") ||
+    HF_ORIGIN_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  if (!trustedHost) return null;
+
+  return { url: target.toString(), sameOrigin: false };
 }
 
 function looksBusy(status: number, text: string): boolean {
@@ -172,7 +250,7 @@ export async function generateModel(
   const controller = new AbortController();
   const cancel = () => controller.abort();
   signal?.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(cancel, LEG_TIMEOUT_MS);
+  const timer = setTimeout(cancel, TOTAL_BUDGET_MS);
 
   try {
     /* ------------------------------ start ------------------------------ */
@@ -185,7 +263,7 @@ export async function generateModel(
       body: JSON.stringify({
         data: [`data:${photo.mimeType};base64,${photo.data}`],
       }),
-      signal: controller.signal,
+      signal: legSignal(controller, SUBMIT_TIMEOUT_MS),
     });
 
     const startText = await start.text();
@@ -218,7 +296,10 @@ export async function generateModel(
     /* ------------------------------ collect ---------------------------- */
     const stream = await fetch(
       `${SPACE_URL}/gradio_api/call${SPACE_API}/${encodeURIComponent(eventId)}`,
-      { headers: { Accept: "text/event-stream", ...authHeaders() }, signal: controller.signal },
+      {
+        headers: { Accept: "text/event-stream", ...authHeaders() },
+        signal: legSignal(controller, STREAM_TIMEOUT_MS),
+      },
     );
 
     if (!stream.ok) {
@@ -251,17 +332,28 @@ export async function generateModel(
     }
 
     const candidates = fileCandidates(result.data);
-    const target = candidates.map((entry) => absolute(SPACE_URL, entry)).find(Boolean);
+    const target = candidates
+      .map((entry) => absolute(SPACE_URL, entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .map((entry) => safeDownloadUrl(SPACE_URL, entry))
+      .find((entry): entry is { url: string; sameOrigin: boolean } => Boolean(entry));
 
     if (!target) {
       return failure(
         "BAD_OUTPUT",
-        "The 3D Space replied without a model file. Nothing was saved — try again.",
+        "The 3D Space replied without a usable model file. Nothing was saved — try again.",
       );
     }
 
     /* ------------------------------ download --------------------------- */
-    const file = await fetch(target, { headers: authHeaders(), signal: controller.signal });
+    // Same-origin only: a foreign host never sees the token. `redirect: "error"`
+    // closes the other half of the hole — a trusted URL that 302s elsewhere
+    // would otherwise carry the Authorization header along with it.
+    const file = await fetch(target.url, {
+      headers: target.sameOrigin ? authHeaders() : {},
+      redirect: "error",
+      signal: legSignal(controller, DOWNLOAD_TIMEOUT_MS),
+    });
 
     if (!file.ok) {
       return failure("GENERATION_FAILED", "The generated model couldn't be downloaded. Try again.");

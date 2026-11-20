@@ -175,3 +175,109 @@ grant execute on function public.menu_save(text, text, text, text, text, jsonb, 
 
 -- Turn a menu off without deleting it:
 --   update public.menus set published = false where slug = 'chai-and-chapter';
+
+-- ---------------------------------------------------------------------------
+-- Hardening migration (2026-11)
+--
+-- Safe to run on a database that already has the tables above: every statement
+-- is guarded, and constraints are added `not valid` so existing rows are not
+-- re-checked. Run `alter table … validate constraint …` afterwards if you want
+-- the old rows verified too (it will fail loudly on any that are wrong, which is
+-- usually how you find them).
+-- ---------------------------------------------------------------------------
+
+-- 1) Length ceilings on leads -------------------------------------------------
+-- The API already trims to these numbers; the table is what actually enforces
+-- them, so a leaked anon key can't be used to store a megabyte of text.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'leads_name_len') then
+    alter table public.leads add constraint leads_name_len
+      check (char_length(name) between 2 and 80) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_cafe_name_len') then
+    alter table public.leads add constraint leads_cafe_name_len
+      check (char_length(cafe_name) between 2 and 80) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_city_len') then
+    alter table public.leads add constraint leads_city_len
+      check (char_length(city) between 2 and 40) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_whatsapp_len') then
+    alter table public.leads add constraint leads_whatsapp_len
+      check (whatsapp is null or whatsapp ~ '^[0-9]{8,15}$') not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_email_len') then
+    alter table public.leads add constraint leads_email_len
+      check (email is null or char_length(email) between 5 and 120) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_message_len') then
+    alter table public.leads add constraint leads_message_len
+      check (message is null or char_length(message) <= 600) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'leads_page_url_len') then
+    alter table public.leads add constraint leads_page_url_len
+      check (page_url is null or char_length(page_url) <= 300) not valid;
+  end if;
+end $$;
+
+-- 2) Menu items validated in the database ------------------------------------
+-- `lib/menu.ts` normalises items on the way in. This is the same ceiling, stated
+-- where a row can't ignore it: an array of objects, each with a usable name and
+-- price, and nothing longer than the UI allows.
+create or replace function public.menu_items_valid(p_items jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(jsonb_typeof(p_items) = 'array', false)
+     and coalesce(jsonb_array_length(p_items) between 1 and 120, false)
+     and not exists (
+       select 1
+       from jsonb_array_elements(
+         case when jsonb_typeof(p_items) = 'array' then p_items else '[]'::jsonb end
+       ) as item
+       where jsonb_typeof(item) <> 'object'
+          or coalesce(char_length(item ->> 'name'), 0) not between 1 and 80
+          or coalesce(char_length(item ->> 'price'), 0) not between 1 and 24
+          or coalesce(char_length(item ->> 'category'), 0) > 40
+     );
+$$;
+
+comment on function public.menu_items_valid(jsonb) is
+  'Mirrors lib/menu.ts normalizeItems: array of {name, price, category?} within the UI limits.';
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'menus_items_valid') then
+    alter table public.menus add constraint menus_items_valid
+      check (public.menu_items_valid(items)) not valid;
+  end if;
+end $$;
+
+-- 3) Optional: write with the service role, not the anon key -----------------
+-- Today the publish/save routes use the anon key, and RLS lets `anon` insert
+-- only. That is the minimum, but it means the anon key (which ships to browsers
+-- for other features and is therefore public) is enough to *attempt* a write.
+-- Moving writes behind SUPABASE_SERVICE_ROLE_KEY removes even that:
+--
+--   1. Add SUPABASE_SERVICE_ROLE_KEY to the server environment. Never prefix it
+--      with NEXT_PUBLIC_: it must never reach a bundle.
+--   2. Add it to the server-only fallback in `lib/menu-store.ts` / the leads
+--      route (`process.env.SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY`).
+--   3. Then, and only then, close the anon door:
+--
+--      revoke insert on public.leads from anon;
+--      revoke insert on public.menus from anon;
+--      drop policy if exists "leads_insert_only" on public.leads;
+--      drop policy if exists "menus_insert_only" on public.menus;
+--
+-- The two functions (`menu_public`, `menu_read`, `menu_save`) stay as they are:
+-- they are `security definer`, so they work for whatever role calls them.

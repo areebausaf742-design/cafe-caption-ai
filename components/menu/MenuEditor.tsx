@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 
 import MenuQr from "@/components/menu/MenuQr";
+import { copyText } from "@/lib/clipboard";
+import { createRowIds } from "@/lib/row-ids";
 import { hasModel, modelCount } from "@/lib/dish";
 import {
   applyDishSuggestion,
@@ -35,6 +37,7 @@ import {
   missingTranslations,
   pruneStaleTranslations,
   stitchTranslations,
+  translatedRowCount,
   translatableLines,
 } from "@/lib/menu-translate";
 import { requestTranslations } from "@/lib/studio-client";
@@ -89,6 +92,8 @@ export default function MenuEditor({ slug }: { slug: string }) {
 
   const keyRef = useRef<string>("");
   const [origin, setOrigin] = useState("");
+  // Stable identity per row object: renaming a dish must not remount its inputs.
+  const rowIds = useRef(createRowIds("menu-row")).current;
 
   /* ------------------------------- load ---------------------------------- */
 
@@ -299,9 +304,21 @@ export default function MenuEditor({ slug }: { slug: string }) {
       return;
     }
 
-    const items = stitchTranslations(draft.items, outcome.translations);
+    const items = stitchTranslations(draft.items, outcome.translations, outcome.indices);
+    const applied = translatedRowCount(items);
+
+    if (applied === 0) {
+      // Say so rather than printing "added" over an unchanged draft.
+      setTranslateNote(
+        "The translator came back without usable names. Nothing was changed — try again in a moment.",
+      );
+      return;
+    }
+
     setDraft((current) => (current ? { ...current, items } : current));
-    setTranslateNote("Hindi and Hinglish added. Save to put them on the live menu.");
+    setTranslateNote(
+      `${applied} of ${items.length} lines now have Hindi and Hinglish. Save to put them on the live menu.`,
+    );
   }, [draft, translating]);
 
   /* -------------------------------- copying ------------------------------ */
@@ -309,14 +326,21 @@ export default function MenuEditor({ slug }: { slug: string }) {
   const publicUrl = `${origin}${menuPath(slug)}`;
   const editorUrl = `${origin}${menuPath(slug)}/edit#${keyRef.current}`;
 
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const copy = useCallback(async (value: string, which: "menu" | "editor") => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(which);
-      window.setTimeout(() => setCopied(null), 2000);
-    } catch {
-      // Clipboard access can be denied; the field is selectable regardless.
-    }
+    // The field stays selectable if this fails; the tick only ever follows a
+    // copy that worked.
+    if (!(await copyText(value))) return;
+    setCopied(which);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(null), 2000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    };
   }, []);
 
   /* --------------------------------- views ------------------------------- */
@@ -519,7 +543,7 @@ export default function MenuEditor({ slug }: { slug: string }) {
         <ul className="mt-3 space-y-2">
           {draft.items.map((item, index) => (
             <li
-              key={index}
+              key={rowIds.idFor(item)}
               className="grid grid-cols-[minmax(0,1fr)_88px] gap-1.5 sm:grid-cols-[150px_minmax(0,1fr)_88px_36px] sm:items-center"
             >
               <input

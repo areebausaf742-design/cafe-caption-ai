@@ -10,7 +10,8 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import { rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { readJsonWithLimit } from "@/lib/request-body";
 import { validateLead, type LeadDraft } from "@/lib/leads";
 
 export const runtime = "nodejs";
@@ -71,7 +72,8 @@ async function storeLead(
 }
 
 export async function POST(request: Request) {
-  const rate = await rateLimit(request, LIMIT);
+  // 1. Peek: a malformed enquiry must not eat one of the six attempts.
+  const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
     const response = NextResponse.json(
@@ -86,31 +88,23 @@ export async function POST(request: Request) {
     return withRateHeaders(response, rate);
   }
 
-  const declaredBytes = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
+  // 2. The body, streamed against 16 KB.
+  const parsed = await readJsonWithLimit(request, MAX_BODY_BYTES, {
+    tooLarge: "That message was too long to send.",
+    invalid: "Request body must be valid JSON.",
+  });
+
+  if (!parsed.ok) {
     return withRateHeaders(
       NextResponse.json(
-        { error: "That message was too long to send.", code: "REQUEST_TOO_LARGE" },
-        { status: 413 },
+        { error: parsed.message, code: parsed.code },
+        { status: parsed.status },
       ),
       rate,
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return withRateHeaders(
-      NextResponse.json(
-        { error: "Request body must be valid JSON.", code: "INVALID_JSON" },
-        { status: 400 },
-      ),
-      rate,
-    );
-  }
-
-  const result = validateLead(body);
+  const result = validateLead(parsed.body);
   if (!result.ok) {
     return withRateHeaders(
       NextResponse.json(
@@ -119,6 +113,21 @@ export async function POST(request: Request) {
       ),
       rate,
     );
+  }
+
+  // 3. Validated. Spend a token and store.
+  const spent = await rateLimit(request, LIMIT);
+  if (!spent.allowed) {
+    const response = NextResponse.json(
+      {
+        error: "Too many requests. Please try again in a few minutes.",
+        code: "RATE_LIMITED",
+        retryAfter: spent.retryAfter,
+      },
+      { status: 429 },
+    );
+    response.headers.set("Retry-After", String(spent.retryAfter));
+    return withRateHeaders(response, spent);
   }
 
   const pageUrl = request.headers.get("referer")?.slice(0, 300) ?? null;
@@ -137,7 +146,7 @@ export async function POST(request: Request) {
         headers: { "Cache-Control": "no-store" },
       },
     ),
-    rate,
+    spent,
   );
 }
 

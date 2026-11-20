@@ -25,13 +25,13 @@ import {
   MAX_CITY_LENGTH,
   MAX_DESCRIPTION_LENGTH,
   TONES,
-  type ApiError,
   type Caption,
-  type GenerateResponse,
   type Language,
   type Tone,
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import { copyText } from "@/lib/clipboard";
+import { requestCaptions } from "@/lib/studio-client";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
 import PhotoDropzone from "@/components/PhotoDropzone";
 import dynamic from "next/dynamic";
@@ -197,82 +197,38 @@ export default function CaptionStudio() {
       setCopiedKey(null);
       setLoadingStep(0);
 
-      const controller = new AbortController();
-      // Longer than the server's 45s budget: the server should always get to
-      // answer with a real error code before the browser gives up.
-      const timeout = setTimeout(() => controller.abort(), 70_000);
+      // One shared client for `/api/generate`: same 70s timeout, same error
+      // shape, same `Retry-After` handling as the other studio tab.
+      const outcome = await requestCaptions({
+        type: "captions",
+        description: text || undefined,
+        tone: activeTone,
+        language,
+        cafeName: cafeName.trim() || undefined,
+        city: city.trim() || undefined,
+        image: photo ? { mimeType: photo.mimeType, data: photo.base64 } : undefined,
+      });
 
-      try {
-        const response = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "captions" as const,
-            description: text || undefined,
-            tone: activeTone,
-            language,
-            cafeName: cafeName.trim() || undefined,
-            city: city.trim() || undefined,
-            image: photo
-              ? { mimeType: photo.mimeType, data: photo.base64 }
-              : undefined,
-          }),
-          signal: controller.signal,
-        });
-
-        const data: unknown = await response.json().catch(() => null);
-
-        if (!response.ok) {
-          const apiError = data as ApiError | null;
-          const retryHeader = Number(response.headers.get("Retry-After"));
-          const retryAfter =
-            apiError?.retryAfter ??
-            (Number.isFinite(retryHeader) && retryHeader > 0
-              ? retryHeader
-              : undefined);
-
-          setError({
-            message:
-              apiError?.error ??
-              `Something went wrong (${response.status}). Please try again.`,
-            hint: apiError?.hint,
-            retryAfter,
-          });
-          setStatus("error");
-          return;
-        }
-
-        const payload = data as GenerateResponse | null;
-        if (payload?.tool !== "captions" || !payload.captions.length) {
-          setError({
-            message:
-              "The response came back empty. Try rephrasing the description.",
-          });
-          setStatus("error");
-          return;
-        }
-
-        setCaptions(payload.captions);
-        setStatus("success");
-        track({
-          name: "generate",
-          props: {
-            tone: activeTone,
-            source: override?.source ?? "form",
-            has_image: Boolean(photo),
-          },
-        });
-      } catch (err) {
-        const aborted = err instanceof DOMException && err.name === "AbortError";
+      if (!outcome.ok) {
         setError({
-          message: aborted
-            ? "That took longer than expected. Please try again."
-            : "Network hiccup — check your connection and try again.",
+          message: outcome.error.message,
+          hint: outcome.error.hint,
+          retryAfter: outcome.error.retryAfter,
         });
         setStatus("error");
-      } finally {
-        clearTimeout(timeout);
+        return;
       }
+
+      setCaptions(outcome.captions);
+      setStatus("success");
+      track({
+        name: "generate",
+        props: {
+          tone: activeTone,
+          source: override?.source ?? "form",
+          has_image: Boolean(photo),
+        },
+      });
     },
     [description, tone, language, cafeName, city, image],
   );
@@ -338,6 +294,10 @@ export default function CaptionStudio() {
     setCaptions([]);
     setError(null);
     setStatus("idle");
+    // The tick belongs to the results being cleared: drop its timer too, so a
+    // stale timeout can't fire into the next generation.
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = null;
     setCopiedKey(null);
     textareaRef.current?.focus();
   };
@@ -363,20 +323,9 @@ export default function CaptionStudio() {
       key: string,
       kind: "caption" | "hashtags" | "all" = "caption",
     ) => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        const scratch = document.createElement("textarea");
-        scratch.value = text;
-        scratch.setAttribute("readonly", "");
-        scratch.style.position = "fixed";
-        scratch.style.opacity = "0";
-        document.body.appendChild(scratch);
-        scratch.select();
-        const ok = document.execCommand("copy");
-        document.body.removeChild(scratch);
-        if (!ok) return;
-      }
+      // One helper: it reports whether the text actually reached the clipboard,
+      // so the tick never lies.
+      if (!(await copyText(text))) return;
 
       setCopiedKey(key);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -865,9 +814,12 @@ export default function CaptionStudio() {
             {status === "success" && captions.length > 0 && (
               <m.div
                 className="mt-5"
-                initial={{ opacity: 0, y: 8 }}
+                initial={reduced ? false : { opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                transition={{
+                  duration: reduced ? 0 : 0.45,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
               >
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                   <Check className="h-3.5 w-3.5 shrink-0 text-sage-500" />

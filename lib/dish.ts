@@ -64,6 +64,58 @@ const MODEL_PATH_RE = /\.(glb|gltf)$/i;
 const IMAGE_PATH_RE = /\.(png|jpe?g|webp|avif)$/i;
 
 /**
+ * Hosts a 3D model or poster may come from, when a deployment says so.
+ *
+ * Without this, "any https URL" is the rule, which means a café — or anyone who
+ * can edit a menu — can point a published page at a host we don't control: a
+ * tracker that learns every visitor's IP, or a domain that later changes hands.
+ * Set `NEXT_PUBLIC_ASSET_HOSTS` (comma-separated) and/or `R2_PUBLIC_URL` and
+ * only those hosts are accepted. Empty means "not configured", and the older
+ * behaviour is kept so nothing breaks on an existing deployment.
+ *
+ * `NEXT_PUBLIC_*` is inlined into the client bundle; `R2_PUBLIC_URL` is only
+ * visible on the server, which is exactly where publishing is validated.
+ */
+const ASSET_HOSTS = (() => {
+  const raw = [
+    process.env.NEXT_PUBLIC_ASSET_HOSTS ?? "",
+    process.env.R2_PUBLIC_URL ?? "",
+  ]
+    .join(",")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  const hosts = new Set<string>();
+  for (const entry of raw) {
+    // Accept either a bare host or a full URL, and ignore any path.
+    try {
+      const host = entry.includes("://") ? new URL(entry).hostname : entry;
+      if (host) hosts.add(host.replace(/^\*?\./, "").toLowerCase());
+    } catch {
+      // A malformed entry shouldn't take the whole allowlist down.
+    }
+  }
+  return hosts;
+})();
+
+export function assetHostsConfigured(): boolean {
+  return ASSET_HOSTS.size > 0;
+}
+
+/** True when this host is allowed by an explicitly configured allowlist. */
+function hostAllowed(hostname: string): boolean {
+  if (ASSET_HOSTS.size === 0) return true;
+  const host = hostname.toLowerCase();
+  if (ASSET_HOSTS.has(host)) return true;
+  // A sub-domain of an allowed host (R2 custom domains, CDN fronts) is fine.
+  for (const allowed of ASSET_HOSTS) {
+    if (host.endsWith(`.${allowed}`)) return true;
+  }
+  return false;
+}
+
+/**
  * Is this a URL we are willing to hand to a `<model-viewer>`-style loader?
  *
  * Deliberately narrow: **https only** (a menu on a phone is https, so a plain
@@ -88,6 +140,7 @@ export function isAssetUrl(raw: unknown, kind: "model" | "image"): boolean {
 
   if (url.protocol !== "https:") return false;
   if (url.username || url.password) return false;
+  if (!hostAllowed(url.hostname)) return false;
 
   const pattern = kind === "model" ? MODEL_PATH_RE : IMAGE_PATH_RE;
   return pattern.test(url.pathname);

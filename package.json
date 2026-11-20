@@ -5,7 +5,9 @@
   "description": "AI-powered Instagram caption & hashtag generator for cafe owners.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
@@ -35,7 +37,8 @@
     "eslint-config-next": "^15.5.29",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=18.18.0"

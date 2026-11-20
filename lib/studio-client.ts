@@ -8,7 +8,13 @@
  */
 import type { DishReading } from "@/lib/dish";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
-import type { ApiError, DishModel, GenerateRequest, GenerateResponse } from "@/lib/types";
+import type {
+  ApiError,
+  Caption,
+  DishModel,
+  GenerateRequest,
+  GenerateResponse,
+} from "@/lib/types";
 
 export interface StudioError {
   message: string;
@@ -95,6 +101,36 @@ export async function requestGeneration(
   }
 }
 
+/**
+ * The caption tab's request: `/api/generate` with `type: "captions"`.
+ *
+ * Thin on purpose — the timeout, the error shape and the `Retry-After` parsing
+ * all live in `requestGeneration`. What belongs here is the check this tab
+ * cares about: a 200 that didn't come back as captions is a failure, not an
+ * empty result.
+ */
+export type CaptionsOutcome =
+  | { ok: true; captions: Caption[] }
+  | { ok: false; error: StudioError };
+
+export async function requestCaptions(body: GenerateRequest): Promise<CaptionsOutcome> {
+  const outcome = await requestGeneration({ ...body, type: "captions" });
+  if (!outcome.ok) return outcome;
+
+  const data = outcome.data;
+  if (data.tool !== "captions" || !Array.isArray(data.captions) || data.captions.length === 0) {
+    return {
+      ok: false,
+      error: {
+        message: "The response came back empty. Try rephrasing the description.",
+        status: 200,
+      },
+    };
+  }
+
+  return { ok: true, captions: data.captions };
+}
+
 /** "Try again in about 40s" / "…about 3 min". */
 export function retryAfterLabel(seconds: number): string {
   return `about ${seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`}`;
@@ -105,7 +141,12 @@ export function retryAfterLabel(seconds: number): string {
 /* -------------------------------------------------------------------------- */
 
 export type TranslationOutcome =
-  | { ok: true; translations: TranslationPayload }
+  | {
+      ok: true;
+      translations: TranslationPayload;
+      /** Original item index for each returned line — see `stitchTranslations`. */
+      indices: number[] | null;
+    }
   | { ok: false; error: StudioError };
 
 /**
@@ -148,8 +189,11 @@ export async function requestTranslations(
       };
     }
 
-    const translations = (data as { translations?: TranslationPayload } | null)
-      ?.translations;
+    const payload = data as {
+      translations?: TranslationPayload;
+      indices?: unknown;
+    } | null;
+    const translations = payload?.translations;
 
     if (!translations || typeof translations !== "object") {
       return {
@@ -161,7 +205,11 @@ export async function requestTranslations(
       };
     }
 
-    return { ok: true, translations };
+    const indices = Array.isArray(payload?.indices)
+      ? payload.indices.filter((value): value is number => Number.isInteger(value))
+      : null;
+
+    return { ok: true, translations, indices };
   } catch (error) {
     const aborted = error instanceof DOMException && error.name === "AbortError";
     return {
@@ -187,6 +235,29 @@ export type DishVisionOutcome =
   | { ok: false; error: StudioError };
 
 /**
+ * One abort domain per request: a timeout, plus the caller's own signal when it
+ * has one. The studio aborts when the owner moves to another dish, so a slow
+ * photo read or a queued 3D job stops costing anything the moment it's moot.
+ */
+function abortable(timeoutMs: number, external?: AbortSignal) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const relay = () => controller.abort();
+
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", relay, { once: true });
+  }
+
+  const release = () => {
+    clearTimeout(timer);
+    external?.removeEventListener("abort", relay);
+  };
+
+  return { controller, release };
+}
+
+/**
  * Read one food photo.
  *
  * The photo travels as base64 for the length of this request and nothing else —
@@ -196,9 +267,9 @@ export type DishVisionOutcome =
  */
 export async function requestDishVision(
   photo: { mimeType: string; data: string },
+  options: { signal?: AbortSignal } = {},
 ): Promise<DishVisionOutcome> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 50_000);
+  const { controller, release } = abortable(50_000, options.signal);
 
   try {
     const response = await fetch("/api/dish-vision", {
@@ -244,7 +315,7 @@ export async function requestDishVision(
       },
     };
   } finally {
-    clearTimeout(timer);
+    release();
   }
 }
 
@@ -260,15 +331,17 @@ export type DishModelOutcome =
  * Ask for a model from a food photo.
  *
  * This is the slowest thing in the product: a free GPU Space may be asleep, and
- * a generation passes through a queue before the mesh exists. Two and a half
- * minutes covers a cold start plus a TripoSR pass; past that the server's own
- * budget has already given up, and saying so beats spinning forever.
+ * a generation passes through a queue before the mesh exists. The server allows
+ * itself 300 s (`maxDuration`), split into per-leg timeouts inside
+ * `lib/space-3d.ts`; the browser waits a shade longer than that so the server's
+ * own error — which says what actually went wrong — wins the race.
  */
+const MODEL_TIMEOUT_MS = 280_000;
 export async function requestDishModel(
   photo: { mimeType: string; data: string },
+  options: { signal?: AbortSignal } = {},
 ): Promise<DishModelOutcome> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 255_000);
+  const { controller, release } = abortable(MODEL_TIMEOUT_MS, options.signal);
 
   try {
     const response = await fetch("/api/dish-model", {
@@ -333,6 +406,6 @@ export async function requestDishModel(
       },
     };
   } finally {
-    clearTimeout(timer);
+    release();
   }
 }

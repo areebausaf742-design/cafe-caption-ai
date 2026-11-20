@@ -45,7 +45,8 @@ import {
 import MenuCard from "@/components/menu/MenuCard";
 import { track } from "@/lib/analytics";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
-import { MENU_DEMO_URL } from "@/lib/business";
+import { demoMenuUrl } from "@/lib/business";
+import { copyText } from "@/lib/clipboard";
 import { MAX_ITEMS, toDigitalMenu } from "@/lib/menu";
 import {
   hasAnyTranslation,
@@ -159,6 +160,8 @@ export default function DigitalMenuStudio({
   const [publishError, setPublishError] = useState<string | null>(null);
   const [editCopied, setEditCopied] = useState(false);
   const editCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The page's own origin, known only after mount — see `qrUrl`. */
+  const [origin, setOrigin] = useState("");
 
   const reduced = usePrefersReducedMotion();
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -168,8 +171,10 @@ export default function DigitalMenuStudio({
   const isLoading = status === "loading";
 
   useEffect(() => {
+    setOrigin(window.location.origin);
     return () => {
       if (downloadTimer.current) clearTimeout(downloadTimer.current);
+      if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
     };
   }, []);
 
@@ -294,6 +299,9 @@ export default function DigitalMenuStudio({
     setPublished(null);
     setPublishedItems(null);
     setPublishError(null);
+    if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
+    editCopyTimer.current = null;
+    setEditCopied(false);
   };
 
   /* ------------------------- editing the draft ---------------------------- */
@@ -406,7 +414,7 @@ export default function DigitalMenuStudio({
       setTranslating(false);
 
       if (outcome.ok) {
-        publishItems = stitchTranslations(publishItems, outcome.translations);
+        publishItems = stitchTranslations(publishItems, outcome.translations, outcome.indices);
         setItems(publishItems);
         setTranslationNote(null);
       } else {
@@ -459,14 +467,12 @@ export default function DigitalMenuStudio({
 
   const copyEditLink = useCallback(async () => {
     if (!published) return;
-    try {
-      await navigator.clipboard.writeText(published.editUrl);
-      setEditCopied(true);
-      if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
-      editCopyTimer.current = setTimeout(() => setEditCopied(false), 2200);
-    } catch {
-      // Clipboard permission can be refused; the field stays selectable.
-    }
+    // The field stays selectable when the clipboard is refused; the tick waits
+    // for a copy that actually landed.
+    if (!(await copyText(published.editUrl))) return;
+    setEditCopied(true);
+    if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
+    editCopyTimer.current = setTimeout(() => setEditCopied(false), 2200);
   }, [published]);
 
   /* ------------------------------ QR code ------------------------------- */
@@ -547,7 +553,9 @@ export default function DigitalMenuStudio({
   const isSample = !menu;
   const itemCount = shown.items.length;
   // The QR encodes the published menu when there is one, the demo otherwise.
-  const qrUrl = published?.url ?? MENU_DEMO_URL;
+  // `origin` is filled after mount, so the code always points at the host the
+  // owner is actually looking at — never a build-time guess.
+  const qrUrl = published?.url ?? (origin ? demoMenuUrl(origin) : "");
   // Editing after publishing doesn't touch the live page — the editor link does
   // that — so say it rather than let the change look saved.
   const editedSincePublish = Boolean(
@@ -782,6 +790,9 @@ export default function DigitalMenuStudio({
 
                   <div className="mt-3 flex justify-center">
                     <div className="rounded-lg bg-cream-50 p-2 shadow-[0_10px_24px_-18px_rgba(36,24,18,0.6)]">
+                      {/* Until the origin is known, an empty QR would look like a
+                          broken code. A placeholder keeps the layout stable. */}
+                      {qrUrl ? (
                       <QRCodeSVG
                         value={qrUrl}
                         size={148}
@@ -792,6 +803,12 @@ export default function DigitalMenuStudio({
                         title="QR code linking to the digital menu"
                         className="h-[148px] w-[148px]"
                       />
+                      ) : (
+                        <div
+                          aria-hidden
+                          className="h-[148px] w-[148px] animate-pulse rounded bg-espresso-900/[0.06]"
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -970,7 +987,7 @@ export default function DigitalMenuStudio({
 
       {/* 1024px canvas used only for the PNG export — never displayed. */}
       <div aria-hidden className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
-        <QRCodeCanvas
+        {qrUrl ? <QRCodeCanvas
           ref={qrCanvasRef}
           value={qrUrl}
           size={QR_PNG_SIZE}
@@ -980,7 +997,7 @@ export default function DigitalMenuStudio({
           marginSize={4}
           bgColor="#FFFBF5"
           fgColor="#241812"
-        />
+        /> : null}
       </div>
     </div>
   );

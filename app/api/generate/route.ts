@@ -32,13 +32,17 @@ import type {
   Tone,
 } from "@/lib/types";
 import {
+  GEMINI_FALLBACK_MODEL,
+  GEMINI_LAST_RESORT_MODEL,
+  GEMINI_PRIMARY_MODEL,
+} from "@/lib/gemini-config";
+import {
   peekRateLimit,
   rateLimit,
   withRateHeaders,
   type RateLimitResult,
 } from "@/lib/rate-limit";
 import {
-  ALLOWED_IMAGE_TYPES,
   LANGUAGES,
   MAX_CAFE_NAME_LENGTH,
   MAX_CITY_LENGTH,
@@ -50,6 +54,8 @@ import {
   MIN_TOPIC_LENGTH,
   TONES,
 } from "@/lib/types";
+import { parsePhoto, type PhotoInput } from "@/lib/image-validate";
+import { extractJsonObject } from "@/lib/json";
 import {
   googlePostSpec,
   menuSpec,
@@ -99,33 +105,14 @@ const PHOTO_TIMEOUTS_MS = [12_000, 16_000, 12_000] as const;
  */
 const apiKey = process.env.GEMINI_API_KEY;
 
-/** Default model. Override with GEMINI_MODEL if you want a different one. */
-const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
-
 /**
- * Safety net. If the primary model is overloaded (503), rate limited or simply
- * missing on this key, one last attempt goes to a cheaper model before we
- * bother the visitor with an error. Override with GEMINI_FALLBACK_MODEL.
- *
- * This used to default to `gemini-2.0-flash`, which Google has shut down (every
- * call 404s). `gemini-3.5-flash-lite` is the model Google documents as the
- * replacement for `gemini-2.5-flash`, so it is the safest second rung.
+ * The model ladder, from `lib/gemini-config.ts` so all three AI routes agree on
+ * one set of ids: primary → cheaper fallback → last resort (only when every
+ * configured model answers "not found").
  */
-const FALLBACK_MODEL =
-  process.env.GEMINI_FALLBACK_MODEL?.trim() || "gemini-3.5-flash-lite";
-
-/**
- * Last resort, only when every configured model 404s (a retired id, a typo in
- * GEMINI_MODEL). The newest stable Flash generation keeps the studio working
- * without a redeploy.
- *
- * All three ids are overridable, so a retired or renamed model is an env change
- * rather than a code change — but none of the defaults can be verified from a
- * sandbox without the live API key. Check them against the model list once
- * before a launch: `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"`.
- */
-const LAST_RESORT_MODEL =
-  process.env.GEMINI_LAST_RESORT_MODEL?.trim() || "gemini-3.8-flash";
+const MODEL = GEMINI_PRIMARY_MODEL;
+const FALLBACK_MODEL = GEMINI_FALLBACK_MODEL;
+const LAST_RESORT_MODEL = GEMINI_LAST_RESORT_MODEL;
 
 /**
  * Output ceiling. Gemini 2.5 models spend part of this budget on *thinking*
@@ -200,138 +187,6 @@ const PHOTO_LIMIT = {
 /*  PHOTO VALIDATION                                                          */
 /* -------------------------------------------------------------------------- */
 
-/** A photo that passed validation, ready to become an `inlineData` part. */
-interface PhotoInput {
-  mimeType: string;
-  data: string;
-  bytes: number;
-}
-
-type PhotoParse =
-  | { ok: true; photo: PhotoInput | null }
-  | { ok: false; status: number; code: string; message: string };
-
-const ALLOWED_IMAGE_MIME = new Set<string>(ALLOWED_IMAGE_TYPES);
-
-/**
- * Validate the optional photo before it reaches Gemini.
- *
- * The browser already downscales to ~1 MB, but a server never trusts a client:
- * the MIME type is checked against an allowlist, the payload must actually be
- * base64, and the decoded size is capped well under Vercel's 4.5 MB body limit.
- * A data-URL prefix is tolerated (and stripped) rather than rejected.
- */
-function parsePhoto(raw: unknown): PhotoParse {
-  if (raw === undefined || raw === null) return { ok: true, photo: null };
-
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    return {
-      ok: false,
-      status: 400,
-      code: "INVALID_IMAGE",
-      message: "The photo arrived in an unexpected format. Try uploading it again.",
-    };
-  }
-
-  const { mimeType, data } = raw as { mimeType?: unknown; data?: unknown };
-
-  if (
-    typeof mimeType !== "string" ||
-    !ALLOWED_IMAGE_MIME.has(mimeType.trim().toLowerCase())
-  ) {
-    return {
-      ok: false,
-      status: 415,
-      code: "UNSUPPORTED_IMAGE",
-      message:
-        "That file type can't be read. Upload a photo — JPG, PNG or WebP.",
-    };
-  }
-
-  if (typeof data !== "string" || !data.trim()) {
-    return {
-      ok: false,
-      status: 400,
-      code: "INVALID_IMAGE",
-      message: "The photo didn't arrive with any data. Try uploading it again.",
-    };
-  }
-
-  const clean = (data.includes(",") ? data.slice(data.indexOf(",") + 1) : data)
-    .replace(/\s+/g, "");
-
-  if (clean.length > MAX_IMAGE_BASE64_LENGTH) {
-    return {
-      ok: false,
-      status: 413,
-      code: "IMAGE_TOO_LARGE",
-      message:
-        "That photo is too large to process. Try a smaller photo (under 5 MB before compression).",
-    };
-  }
-
-  if (clean.length < 100 || !/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) {
-    return {
-      ok: false,
-      status: 400,
-      code: "INVALID_IMAGE",
-      message: "The photo data was unreadable. Try uploading it again.",
-    };
-  }
-
-  // The MIME type is the client's claim; the file signature is the file's. A
-  // rename or a crafted request can make the two disagree, and forwarding a
-  // non-image to the model wastes an attempt (and a rate-limit token).
-  const type = mimeType.trim().toLowerCase();
-  if (!hasValidImageHeader(clean, type)) {
-    return {
-      ok: false,
-      status: 415,
-      code: "UNSUPPORTED_IMAGE",
-      message:
-        "That file isn't a photo we can read. Try a JPG, PNG or WebP export of it.",
-    };
-  }
-
-  const bytes = Math.floor((clean.replace(/=+$/, "").length * 3) / 4);
-
-  return { ok: true, photo: { mimeType: type, data: clean, bytes } };
-}
-
-/**
- * Does the payload actually begin with the file signature its type claims?
- *
- * Twenty-four base64 characters decode to 18 bytes — enough for every header we
- * care about: JPEG's SOI+marker, PNG's 8-byte magic, WebP's RIFF/WEBP pair, and
- * the ISO base-media `ftyp` box that HEIC and HEIF both use.
- */
-function hasValidImageHeader(base64: string, mimeType: string): boolean {
-  const head = Buffer.from(base64.slice(0, 24), "base64");
-  if (head.length < 12) return false;
-
-  switch (mimeType) {
-    case "image/jpeg":
-      return head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
-    case "image/png":
-      return (
-        head[0] === 0x89 &&
-        head[1] === 0x50 &&
-        head[2] === 0x4e &&
-        head[3] === 0x47
-      );
-    case "image/webp":
-      return (
-        head.subarray(0, 4).toString("latin1") === "RIFF" &&
-        head.subarray(8, 12).toString("latin1") === "WEBP"
-      );
-    case "image/heic":
-    case "image/heif":
-      return head.subarray(4, 8).toString("latin1") === "ftyp";
-    default:
-      return false;
-  }
-}
-
 /* -------------------------------------------------------------------------- */
 /*  HELPERS                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -399,24 +254,6 @@ function cleanOptional(value: unknown, maxLength: number): string | undefined {
   return cleaned.slice(0, maxLength);
 }
 
-/** Pull a JSON object out of a model response, tolerating stray prose/fences. */
-function extractJson(raw: string): unknown {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Model response did not contain JSON.");
-    }
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /*  ERRORS                                                                    */
@@ -597,7 +434,7 @@ function interpretResponse<T>(
   }
 
   try {
-    return spec.parse(extractJson(text));
+    return spec.parse(extractJsonObject(text, "Model response did not contain JSON."));
   } catch (error) {
     throw new ModelOutputError(
       "unparsable",
