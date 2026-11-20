@@ -98,7 +98,6 @@ export default function DishStudio({
   const item = items[index];
 
   const [fields, setFields] = useState<Suggestion>(EMPTY);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [reading, setReading] = useState(false);
@@ -118,36 +117,45 @@ export default function DishStudio({
   const [modelError, setModelError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const photoUrl = useRef<string | null>(null);
+
+  /**
+   * One counter for the two requests this panel can have in flight. A result is
+   * only allowed to touch state when it still owns the current number — so
+   * switching dish mid-generation, or unmounting, can never write the previous
+   * dish's model into the new one.
+   */
+  const jobRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const withModel = useMemo(() => modelCount(items), [items]);
   const withCopy = useMemo(() => items.filter((row) => hasDish(row)).length, [items]);
   const share = items.length ? Math.round((withModel / items.length) * 100) : 0;
 
-  const forgetPhoto = useCallback(() => {
-    if (photoUrl.current) {
-      URL.revokeObjectURL(photoUrl.current);
-      photoUrl.current = null;
-    }
-    setPhoto(null);
-  }, []);
+  // An object URL lives exactly as long as the photo it belongs to: swapping or
+  // clearing the photo, or closing the panel, frees it. Never during render.
+  useEffect(() => {
+    if (!photo) return;
+    const url = photo.previewUrl;
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
 
-  useEffect(() => () => forgetPhoto(), [forgetPhoto]);
+  // Load the selected row's stored words when the *row* changes — keyed on the
+  // index only. Keying on the name or price (as this used to) meant that typing
+  // a new dish name into the field reloaded the row underneath you and threw
+  // away the description, the ingredients and the photo that was just uploaded.
+  useEffect(() => {
+    const row = items[index];
+    if (!row) return;
 
-  // Load the selected row's stored words once per row, so switching dishes never
-  // shows the previous dish's description — or its photo — in the panel.
-  const rowKey = item ? `${index}:${item.name}:${item.price}` : "none";
-  if (item && loadedFor !== rowKey) {
-    setLoadedFor(rowKey);
     setFields({
-      name: item.name,
-      category: item.category,
-      description: item.dish?.description ?? "",
-      ingredients: item.dish?.ingredients.join(", ") ?? "",
+      name: row.name,
+      category: row.category,
+      description: row.dish?.description ?? "",
+      ingredients: row.dish?.ingredients.join(", ") ?? "",
     });
-    setGlb(item.model?.glb ?? "");
-    setPoster(item.model?.poster ?? "");
-    setBy(item.model?.by ?? "");
+    setGlb(row.model?.glb ?? "");
+    setPoster(row.model?.poster ?? "");
+    setBy(row.model?.by ?? "");
     setReadError(null);
     setModelError(null);
     setFromAi(null);
@@ -155,12 +163,21 @@ export default function DishStudio({
     setGenError(null);
     setGenNote(null);
     setGenerating(false);
-    if (photoUrl.current) {
-      URL.revokeObjectURL(photoUrl.current);
-      photoUrl.current = null;
-    }
     setPhoto(null);
-  }
+    // `items` is read only to hydrate the row at mount; the row's own edits must
+    // not re-trigger this, which is exactly what excluding it does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index]);
+
+  // Switching dish (or closing the panel) cancels whatever was running, so a
+  // slow generation never lands on a row the owner has moved on from.
+  useEffect(() => {
+    return () => {
+      jobRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, [index]);
 
   // An honest clock: the number shown is real elapsed time, not a progress bar
   // guessing at a GPU queue.
@@ -189,9 +206,7 @@ export default function DishStudio({
         return;
       }
 
-      if (photoUrl.current) URL.revokeObjectURL(photoUrl.current);
-      photoUrl.current = prepared.previewUrl;
-
+      // The previous preview URL is revoked by the effect that owns it.
       setPhoto({
         base64: prepared.base64,
         mimeType: prepared.mimeType,
@@ -205,11 +220,23 @@ export default function DishStudio({
 
   const readWords = useCallback(async () => {
     if (!photo) return;
+
+    const token = ++jobRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setReading(true);
     setReadError(null);
     setSaved(false);
 
-    const outcome = await requestDishVision({ mimeType: photo.mimeType, data: photo.base64 });
+    const outcome = await requestDishVision(
+      { mimeType: photo.mimeType, data: photo.base64 },
+      { signal: controller.signal },
+    );
+
+    // A stale answer belongs to a dish the owner has already left.
+    if (token !== jobRef.current) return;
     setReading(false);
 
     if (!outcome.ok) {
@@ -229,12 +256,25 @@ export default function DishStudio({
 
   const buildModel = useCallback(async () => {
     if (!photo || generating) return;
+
+    // The token is what makes "still wanted?" answerable after an await.
+    const token = ++jobRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const rowIndex = index;
+
     setGenerating(true);
     setGenError(null);
     setGenNote(null);
     setModelError(null);
 
-    const outcome = await requestDishModel({ mimeType: photo.mimeType, data: photo.base64 });
+    const outcome = await requestDishModel(
+      { mimeType: photo.mimeType, data: photo.base64 },
+      { signal: controller.signal },
+    );
+
+    if (token !== jobRef.current) return; // row changed or panel closed
     setGenerating(false);
 
     if (!outcome.ok) {
@@ -242,7 +282,9 @@ export default function DishStudio({
       return;
     }
 
-    onSetModel(index, outcome.model);
+    // The model belongs to the row whose photo produced it, not to whatever is
+    // selected by the time the GPU answers.
+    onSetModel(rowIndex, outcome.model);
     setGenNote(
       `Model built from your photo in ${outcome.meta.seconds}s on a ${outcome.meta.via}. It's in this draft — Save changes to put it on the menu.`,
     );

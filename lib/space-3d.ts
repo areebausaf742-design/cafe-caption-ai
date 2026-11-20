@@ -96,6 +96,62 @@ function authHeaders(): Record<string, string> {
   return HF_TOKEN ? { Authorization: `Bearer ${HF_TOKEN}` } : {};
 }
 
+/**
+ * Where the generated file may actually be downloaded from.
+ *
+ * The Gradio reply is attacker-influenced data: a compromised or impersonated
+ * Space could hand back `https://collect.evil.test/x.glb` and, without this
+ * check, the next line would send `Authorization: Bearer $HF_TOKEN` to it. So a
+ * URL is only usable when it is https, and only on our own Space's origin or a
+ * Hugging Face host — and the token is only ever attached to a same-origin
+ * request.
+ *
+ * Loopback over http is allowed **only** when the Space URL itself is loopback,
+ * which is what a local stub Space (and `npm run dev` testing) needs; the token
+ * still isn't sent there unless it's same-origin.
+ */
+const HF_ORIGIN_SUFFIXES = [".hf.space", ".huggingface.co"];
+
+function isLoopback(hostname: string): boolean {
+  return (
+    hostname === "127.0.0.1" ||
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+export function safeDownloadUrl(
+  base: string,
+  candidate: string,
+): { url: string; sameOrigin: boolean } | null {
+  let space: URL;
+  let target: URL;
+  try {
+    space = new URL(base);
+    target = new URL(candidate);
+  } catch {
+    return null;
+  }
+
+  const httpsOk = target.protocol === "https:";
+  const localHttpOk =
+    target.protocol === "http:" && space.protocol === "http:" && isLoopback(target.hostname);
+  if (!httpsOk && !localHttpOk) return null;
+
+  const sameOrigin = target.origin === space.origin;
+  if (sameOrigin) return { url: target.toString(), sameOrigin: true };
+
+  const host = target.hostname.toLowerCase();
+  const trustedHost =
+    host === "huggingface.co" ||
+    host.endsWith(".huggingface.co") ||
+    HF_ORIGIN_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  if (!trustedHost) return null;
+
+  return { url: target.toString(), sameOrigin: false };
+}
+
 function looksBusy(status: number, text: string): boolean {
   if (status === 429) return true;
   return /quota|gpu hours|too many requests|rate limit|queue is full|try again later/i.test(text);
@@ -251,17 +307,28 @@ export async function generateModel(
     }
 
     const candidates = fileCandidates(result.data);
-    const target = candidates.map((entry) => absolute(SPACE_URL, entry)).find(Boolean);
+    const target = candidates
+      .map((entry) => absolute(SPACE_URL, entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .map((entry) => safeDownloadUrl(SPACE_URL, entry))
+      .find((entry): entry is { url: string; sameOrigin: boolean } => Boolean(entry));
 
     if (!target) {
       return failure(
         "BAD_OUTPUT",
-        "The 3D Space replied without a model file. Nothing was saved — try again.",
+        "The 3D Space replied without a usable model file. Nothing was saved — try again.",
       );
     }
 
     /* ------------------------------ download --------------------------- */
-    const file = await fetch(target, { headers: authHeaders(), signal: controller.signal });
+    // Same-origin only: a foreign host never sees the token. `redirect: "error"`
+    // closes the other half of the hole — a trusted URL that 302s elsewhere
+    // would otherwise carry the Authorization header along with it.
+    const file = await fetch(target.url, {
+      headers: target.sameOrigin ? authHeaders() : {},
+      redirect: "error",
+      signal: controller.signal,
+    });
 
     if (!file.ok) {
       return failure("GENERATION_FAILED", "The generated model couldn't be downloaded. Try again.");

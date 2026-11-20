@@ -54,48 +54,56 @@ function warnOnce(reason: unknown) {
   );
 }
 
+/** Set `TRUST_PROXY=1` only when *our own* proxy strips and sets the headers. */
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+
+/** Vercel's edge sets its own headers; nothing else may be believed. */
+const ON_VERCEL = Boolean(process.env.VERCEL);
+
 /**
  * The caller's IP, as best we can know it behind a proxy.
  *
- * `x-forwarded-for` is append-only: every hop adds to it, so the *first* entry
- * is whatever the caller chose to send. Reading it (as this file used to) meant
- * a request with `X-Forwarded-For: <random>` got a fresh bucket every time.
+ * Header spoofing is the whole problem here. `x-forwarded-for` is append-only
+ * and `x-real-ip` is just a header: a caller can send either, so trusting them
+ * unconditionally hands out a fresh bucket per request — the rate limit becomes
+ * a suggestion.
  *
- * So: headers the edge sets itself win, and when we have to read
- * `x-forwarded-for` we take the *last* hop — the proxy closest to us, the one
- * the client can't append to.
+ * So:
+ *   1. `x-vercel-forwarded-for` is believed only where it is genuinely set by
+ *      the platform (on Vercel, or with TRUST_PROXY=1 for a self-hosted proxy).
+ *   2. `x-real-ip` / the nearest `x-forwarded-for` hop are believed only with
+ *      TRUST_PROXY=1, which is a statement that our own proxy overwrites them.
+ *   3. Otherwise the caller is bucketed as `unknown`. That is deliberately
+ *      coarse: one shared bucket is worse for a handful of visitors and far
+ *      better than a limit anyone can walk around by editing a header. Next's
+ *      `Request` exposes no socket address to fall back to.
  */
 export function clientIp(request: Request): string {
-  const vercelForwarded = request.headers.get("x-vercel-forwarded-for");
-  if (vercelForwarded) {
-    const first = vercelForwarded.split(",")[0]?.trim();
-    if (first) return first;
+  if (ON_VERCEL || TRUST_PROXY) {
+    const edge = request.headers.get("x-vercel-forwarded-for");
+    if (edge) {
+      const first = edge.split(",")[0]?.trim();
+      if (first) return first;
+    }
   }
 
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
+  if (TRUST_PROXY) {
+    const realIp = request.headers.get("x-real-ip")?.trim();
+    if (realIp) return realIp;
 
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const hops = forwarded
-      .split(",")
-      .map((hop) => hop.trim())
-      .filter(Boolean);
-    const nearest = hops.at(-1);
-    if (nearest) return nearest;
+    const forwarded = request.headers.get("x-forwarded-for");
+    if (forwarded) {
+      const hops = forwarded
+        .split(",")
+        .map((hop) => hop.trim())
+        .filter(Boolean);
+      // The last hop is the proxy closest to us — the one a client can't append to.
+      const nearest = hops.at(-1);
+      if (nearest) return nearest;
+    }
   }
 
-  // No proxy headers at all: local dev, or a direct hit. Bucketing every such
-  // caller as "unknown" let one of them lock out all the others, so fall back to
-  // a coarse fingerprint instead. It only has to be stable, not identifying —
-  // the key is hashed again below and never stored raw.
-  const fingerprint = [
-    request.headers.get("user-agent") ?? "",
-    request.headers.get("accept-language") ?? "",
-    request.headers.get("accept-encoding") ?? "",
-  ].join("|");
-
-  return `anon:${createHash("sha256").update(fingerprint).digest("hex").slice(0, 16)}`;
+  return "unknown";
 }
 
 function bucketKey(request: Request, namespace: string): string {

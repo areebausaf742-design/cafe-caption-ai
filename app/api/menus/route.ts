@@ -25,7 +25,8 @@ import {
   createMenuRecord,
   menuStoreConfigured,
 } from "@/lib/menu-store";
-import { rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { readJsonWithLimit } from "@/lib/request-body";
 import { siteUrl } from "@/lib/site";
 
 export const runtime = "nodejs";
@@ -46,7 +47,8 @@ const LIMIT = { namespace: "menu-publish", max: 5, windowMs: 10 * 60 * 1000 };
 const SLUG_ATTEMPTS = 5;
 
 export async function POST(request: Request) {
-  const rate = await rateLimit(request, LIMIT);
+  // 1. Peek at the budget: an oversized or invalid menu must not cost a publish.
+  const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
     const response = NextResponse.json(
@@ -61,6 +63,7 @@ export async function POST(request: Request) {
     return withRateHeaders(response, rate);
   }
 
+  // 2. Configuration before any work.
   if (!menuStoreConfigured()) {
     return withRateHeaders(
       NextResponse.json(
@@ -75,35 +78,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const declaredBytes = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
+  // 3. The body, streamed: a chunked upload can't walk past the ceiling.
+  const parsed = await readJsonWithLimit(request, MAX_BODY_BYTES, {
+    tooLarge:
+      "That menu is too big to publish. Long 3D links or descriptions on many dishes usually push it over — shorten a few and try again.",
+    invalid: "Request body must be valid JSON.",
+  });
+
+  if (!parsed.ok) {
     return withRateHeaders(
       NextResponse.json(
-        {
-          error:
-            "That menu is too big to publish. Long 3D links or descriptions on many dishes usually push it over — shorten a few and try again.",
-          code: "REQUEST_TOO_LARGE",
-        },
-        { status: 413 },
+        { error: parsed.message, code: parsed.code },
+        { status: parsed.status },
       ),
       rate,
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return withRateHeaders(
-      NextResponse.json(
-        { error: "Request body must be valid JSON.", code: "INVALID_JSON" },
-        { status: 400 },
-      ),
-      rate,
-    );
-  }
-
-  const result = validateMenu(body);
+  const result = validateMenu(parsed.body);
   if (!result.ok) {
     return withRateHeaders(
       NextResponse.json(
@@ -118,6 +110,21 @@ export async function POST(request: Request) {
   const key = createEditKey();
   const hash = await hashEditKey(key);
   const base = slugify(menu.cafeName);
+
+  // 4. Validated. Spend one token and publish.
+  const spent = await rateLimit(request, LIMIT);
+  if (!spent.allowed) {
+    const response = NextResponse.json(
+      {
+        error: "That's a lot of menus. Try again in a few minutes.",
+        code: "RATE_LIMITED",
+        retryAfter: spent.retryAfter,
+      },
+      { status: 429 },
+    );
+    response.headers.set("Retry-After", String(spent.retryAfter));
+    return withRateHeaders(response, spent);
+  }
 
   for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt += 1) {
     const slug = withSuffix(base, attempt);
@@ -136,7 +143,7 @@ export async function POST(request: Request) {
           },
           { status: 503 },
         ),
-        rate,
+        spent,
       );
     }
 
@@ -152,7 +159,7 @@ export async function POST(request: Request) {
         },
         { status: 201, headers: { "Cache-Control": "no-store" } },
       ),
-      rate,
+      spent,
     );
   }
 
@@ -165,13 +172,6 @@ export async function POST(request: Request) {
       },
       { status: 409 },
     ),
-    rate,
-  );
-}
-
-export async function GET() {
-  return NextResponse.json(
-    { error: "This endpoint only accepts POST requests.", code: "METHOD_NOT_ALLOWED" },
-    { status: 405 },
+    spent,
   );
 }

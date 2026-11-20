@@ -25,9 +25,12 @@ import {
   type ResponseSchema,
 } from "@google/generative-ai";
 
+import { GEMINI_FALLBACK_MODEL, GEMINI_PRIMARY_MODEL, thinkingConfigFor } from "@/lib/gemini-config";
+import { BlockedReply, blockReason, isRetryable } from "@/lib/gemini-retry";
 import { MAX_CATEGORY, MAX_ITEM_NAME, MAX_ITEMS } from "@/lib/menu";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
 import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
+import { readJsonWithLimit } from "@/lib/request-body";
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -38,10 +41,9 @@ export const maxDuration = 60;
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-/** Same ladder as the studio, so there is one set of model guesses, not two. */
-const MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
-const FALLBACK_MODEL =
-  process.env.GEMINI_FALLBACK_MODEL?.trim() || "gemini-3.5-flash-lite";
+/** Same ladder as the studio, so there is one set of model ids, not two. */
+const MODEL = GEMINI_PRIMARY_MODEL;
+const FALLBACK_MODEL = GEMINI_FALLBACK_MODEL;
 
 /** Names only, so a 120-line menu is a small body. */
 const MAX_BODY_BYTES = 32_000;
@@ -169,6 +171,9 @@ async function translateChunk(
   const client = new GoogleGenerativeAI(key);
 
   for (const model of [MODEL, FALLBACK_MODEL]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS);
+
     try {
       const generativeModel = client.getGenerativeModel({
         model,
@@ -177,20 +182,21 @@ async function translateChunk(
           responseSchema: SCHEMA,
           temperature: 0.2,
           maxOutputTokens: 4096,
+          // Without this, 2.5 models can spend the output budget thinking and
+          // return a truncated array — which this route must reject anyway.
+          ...thinkingConfigFor(model),
         },
       });
 
-      const response = await Promise.race([
-        generativeModel.generateContent(
-          `${SYSTEM}\n\nMenu lines to translate:\n${JSON.stringify(lines)}`,
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`timeout after ${CHUNK_TIMEOUT_MS}ms`)),
-            CHUNK_TIMEOUT_MS,
-          ),
-        ),
-      ]);
+      // A real abort rather than a lost Promise.race: the request is cancelled,
+      // so the chunk stops costing tokens the moment we stop waiting for it.
+      const response = await generativeModel.generateContent(
+        `${SYSTEM}\n\nMenu lines to translate:\n${JSON.stringify(lines)}`,
+        { signal: controller.signal },
+      );
+
+      const blocked = blockReason(response.response);
+      if (blocked) throw new BlockedReply(blocked);
 
       const parsed = extractJson(response.response.text()) as Record<
         string,
@@ -235,6 +241,10 @@ async function translateChunk(
       console.warn(
         `[translate] ${model} failed: ${error instanceof Error ? error.message.slice(0, 160) : "unknown"}`,
       );
+      // A bad key or a safety block will fail the same way on the next model.
+      if (!isRetryable(error)) throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -242,7 +252,8 @@ async function translateChunk(
 }
 
 export async function POST(request: Request) {
-  const rate = await rateLimit(request, LIMIT);
+  // 1. Peek: an oversized or malformed menu must not cost a translation.
+  const rate = await peekRateLimit(request, LIMIT);
 
   if (!rate.allowed) {
     return fail(
@@ -253,13 +264,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const declared = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    return fail(413, "That menu is too long to translate in one go.", "REQUEST_TOO_LARGE", {
-      rate,
-    });
+  // 2. The body, streamed, so a chunked oversized menu is refused rather than
+  //    buffered.
+  const parsedBody = await readJsonWithLimit(request, MAX_BODY_BYTES, {
+    tooLarge: "That menu is too long to translate in one go.",
+    invalid: "Nothing to translate.",
+  });
+
+  if (!parsedBody.ok) {
+    return fail(parsedBody.status, parsedBody.message, parsedBody.code, { rate });
   }
 
+  // 3. Configuration before any work.
   if (!apiKey) {
     return fail(
       503,
@@ -269,14 +285,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return fail(400, "Nothing to translate.", "VALIDATION_ERROR", { rate });
-  }
-
-  const rawItems = (body as { items?: unknown })?.items;
+  const rawItems = (parsedBody.body as { items?: unknown } | null)?.items;
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
     return fail(400, "Nothing to translate.", "VALIDATION_ERROR", { rate });
   }
@@ -291,17 +300,35 @@ export async function POST(request: Request) {
 
   // Only these two fields survive: a price sent by a stale client is dropped
   // here as well as never being built in the studio.
+  //
+  // Blank rows are skipped, and the original index of every row that *is* sent
+  // is recorded. Translations come back aligned to what we sent, so the client
+  // stitches by index instead of by position — one empty row can no longer
+  // shift every name one place and cost the menu its Hindi.
   const lines: CleanLine[] = [];
-  for (const entry of rawItems) {
-    if (typeof entry !== "object" || entry === null) continue;
+  const indices: number[] = [];
+  rawItems.forEach((entry, index) => {
+    if (typeof entry !== "object" || entry === null) return;
     const row = entry as Record<string, unknown>;
     const name = clean(row.name, MAX_ITEM_NAME);
-    if (!name) continue;
+    if (!name) return;
     lines.push({ category: clean(row.category, MAX_CATEGORY) || "Menu", name });
-  }
+    indices.push(index);
+  });
 
   if (lines.length === 0) {
     return fail(400, "Nothing to translate.", "VALIDATION_ERROR", { rate });
+  }
+
+  // 4. Validated. Spend a token and translate.
+  const spent = await rateLimit(request, LIMIT);
+  if (!spent.allowed) {
+    return fail(
+      429,
+      "That's a lot of translating. Try again in a few minutes.",
+      "RATE_LIMITED",
+      { rate: spent, retryAfter: spent.retryAfter },
+    );
   }
 
   const chunks: CleanLine[][] = [];
@@ -328,8 +355,11 @@ export async function POST(request: Request) {
       throw new Error("No language survived every chunk.");
     }
 
+    // Every model that actually contributed, so meta is not a half-truth.
+    const models = [...new Set(results.map((result) => result.model))];
+
     console.info(
-      `[translate] ${lines.length} lines in ${chunks.length} chunk(s) in ${Date.now() - started}ms via ${results[0]?.model}`,
+      `[translate] ${lines.length} lines in ${chunks.length} chunk(s) in ${Date.now() - started}ms via ${models.join(", ")}`,
     );
 
     return withRateHeaders(
@@ -337,15 +367,19 @@ export async function POST(request: Request) {
         {
           ok: true,
           translations,
+          // Where each returned line belongs. Without this the client has to
+          // guess, and guessing is how a name lands beside the wrong price.
+          indices,
           meta: {
-            model: results[0]?.model ?? MODEL,
+            model: models.join(","),
+            models,
             items: lines.length,
             languages: TRANSLATION_LANGUAGES,
           },
         },
         { status: 200, headers: { "Cache-Control": "no-store" } },
       ),
-      rate,
+      spent,
     );
   } catch (error) {
     console.error(`[translate] failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -355,7 +389,7 @@ export async function POST(request: Request) {
       502,
       "The translation service didn't answer. You can still publish in English.",
       "TRANSLATION_FAILED",
-      { rate },
+      { rate: spent },
     );
   }
 }

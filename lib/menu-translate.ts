@@ -78,36 +78,72 @@ export function translatableLines(items: MenuItem[]): TranslatedLine[] {
 /**
  * Attach translations to the rows they belong to.
  *
- * Deliberately forgiving: a language whose list is the wrong length is dropped
- * whole (rather than silently shifting every name one row up, which would put
- * "Cappuccino" beside a price of ₹80), and a row whose translated name is empty
- * keeps the printed name. The price object is never touched — it's the same
- * string, from the same item.
+ * `indices` is what the translator actually saw: the original position of every
+ * row it was given, because blank rows are never sent. Stitching by position
+ * instead would shift every name one place the moment a café leaves a row empty.
+ *
+ * Deliberately forgiving in the other direction too: a language whose list
+ * doesn't line up with those indices is dropped whole (rather than silently
+ * putting "Cappuccino" beside a price of ₹80), and a row whose translated name
+ * is empty keeps the printed name. The price object is never touched — it's the
+ * same string, from the same item.
  */
 export function stitchTranslations(
   items: MenuItem[],
   payload: TranslationPayload | null | undefined,
+  indices?: number[] | null,
 ): MenuItem[] {
   if (!payload) return items;
 
-  const overlays: MenuTranslations[] = [];
-  for (const language of TRANSLATION_LANGUAGES) {
-    const lines = payload[language];
-    if (Array.isArray(lines) && lines.length === items.length) {
-      overlays.push({ [language]: lines as never });
+  /**
+   * Where to read a row's translation from, for one language. `null` means this
+   * language can't be trusted at all.
+   */
+  const mappingFor = (lines: unknown): Map<number, number> | null => {
+    if (!Array.isArray(lines)) return null;
+
+    // Indexed payload: the server told us exactly which row each line belongs
+    // to, which is the case whenever blank rows were skipped.
+    if (indices && indices.length === lines.length) {
+      const map = new Map<number, number>();
+      indices.forEach((original, position) => {
+        if (Number.isInteger(original) && original >= 0 && original < items.length) {
+          map.set(original, position);
+        }
+      });
+      return map.size === lines.length ? map : null;
     }
+
+    // Legacy positional payload: only safe when nothing was skipped.
+    if (!indices && lines.length === items.length) {
+      const map = new Map<number, number>();
+      for (let index = 0; index < items.length; index += 1) map.set(index, index);
+      return map;
+    }
+
+    return null;
+  };
+
+  const mappings = new Map<TranslationLanguage, Map<number, number>>();
+  for (const language of TRANSLATION_LANGUAGES) {
+    const mapping = mappingFor(payload[language]);
+    if (mapping) mappings.set(language, mapping);
   }
 
-  if (overlays.length === 0) return items;
+  if (mappings.size === 0) return items;
 
   return items.map((item, index) => {
     const translations: MenuTranslations = {};
 
     for (const language of TRANSLATION_LANGUAGES) {
+      const mapping = mappings.get(language);
       const lines = payload[language];
-      if (!Array.isArray(lines) || lines.length !== items.length) continue;
+      if (!mapping || !Array.isArray(lines)) continue;
 
-      const line = lines[index];
+      const position = mapping.get(index);
+      if (position === undefined) continue;
+
+      const line = lines[position];
       const name = clean(line?.name, MAX_ITEM_NAME);
       if (!name) continue;
 
@@ -120,6 +156,11 @@ export function stitchTranslations(
     if (Object.keys(translations).length === 0) return item;
     return { ...item, translations };
   });
+}
+
+/** How many rows ended up with at least one translated name. */
+export function translatedRowCount(items: MenuItem[]): number {
+  return items.filter((item) => Object.keys(item.translations ?? {}).length > 0).length;
 }
 
 /* -------------------------------------------------------------------------- */

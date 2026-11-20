@@ -21,7 +21,8 @@ import {
   readMenuForEdit,
   saveMenu,
 } from "@/lib/menu-store";
-import { rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import { readJsonWithLimit } from "@/lib/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,9 +56,23 @@ export async function GET(request: Request, { params }: Params) {
   const { slug } = await params;
 
   if (!SLUG_RE.test(slug)) return fail(404, "No menu here.", "NOT_FOUND");
+
+  const peeked = await peekRateLimit(request, READ_LIMIT);
+  if (!peeked.allowed) {
+    return withRateHeaders(
+      fail(429, "Too many requests. Give it a minute.", "RATE_LIMITED"),
+      peeked,
+    );
+  }
+
   if (!menuStoreConfigured()) {
     return fail(503, "Menus aren't switched on yet.", "STORE_UNAVAILABLE");
   }
+
+  // The key is the only credential, so a request without one is answered before
+  // any database work — and before a token is spent.
+  const hash = await keyHash(request);
+  if (!hash) return fail(401, "This editor link is missing its key.", "BAD_KEY");
 
   const rate = await rateLimit(request, READ_LIMIT);
   if (!rate.allowed) {
@@ -66,9 +81,6 @@ export async function GET(request: Request, { params }: Params) {
       rate,
     );
   }
-
-  const hash = await keyHash(request);
-  if (!hash) return fail(401, "This editor link is missing its key.", "BAD_KEY");
 
   try {
     const menu = await readMenuForEdit(slug, hash);
@@ -95,51 +107,53 @@ export async function PATCH(request: Request, { params }: Params) {
   const { slug } = await params;
 
   if (!SLUG_RE.test(slug)) return fail(404, "No menu here.", "NOT_FOUND");
+
+  const peeked = await peekRateLimit(request, SAVE_LIMIT);
+  if (!peeked.allowed) {
+    const response = fail(429, "Too many saves. Give it a minute.", "RATE_LIMITED");
+    response.headers.set("Retry-After", String(peeked.retryAfter));
+    return withRateHeaders(response, peeked);
+  }
+
   if (!menuStoreConfigured()) {
     return fail(503, "Menus aren't switched on yet.", "STORE_UNAVAILABLE");
   }
 
-  const rate = await rateLimit(request, SAVE_LIMIT);
-  if (!rate.allowed) {
-    const response = fail(429, "Too many saves. Give it a minute.", "RATE_LIMITED");
-    response.headers.set("Retry-After", String(rate.retryAfter));
-    return withRateHeaders(response, rate);
-  }
-
+  // 1. The key. A wrong or missing one is answered before the body is even read.
   const hash = await keyHash(request);
   if (!hash) return fail(401, "This editor link is missing its key.", "BAD_KEY");
 
-  const declaredBytes = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BODY_BYTES) {
+  // 2. The body, streamed against a hard ceiling.
+  const parsed = await readJsonWithLimit(request, MAX_BODY_BYTES, {
+    tooLarge:
+      "That menu is too big to save. Very long 3D links or descriptions on many dishes usually push it over.",
+    invalid: "Request body must be valid JSON.",
+  });
+
+  if (!parsed.ok) {
     return withRateHeaders(
-      fail(
-        413,
-        "That menu is too big to save. Very long 3D links or descriptions on many dishes usually push it over.",
-        "REQUEST_TOO_LARGE",
-      ),
-      rate,
+      fail(parsed.status, parsed.message, parsed.code),
+      peeked,
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return withRateHeaders(
-      fail(400, "Request body must be valid JSON.", "INVALID_JSON"),
-      rate,
-    );
-  }
-
-  const result = validateMenu(body);
+  const result = validateMenu(parsed.body);
   if (!result.ok) {
     return withRateHeaders(
       NextResponse.json(
         { error: result.error, field: result.field, code: "VALIDATION_ERROR" },
         { status: 400, headers: NO_STORE },
       ),
-      rate,
+      peeked,
     );
+  }
+
+  // 3. Validated. Spend a token and write.
+  const rate = await rateLimit(request, SAVE_LIMIT);
+  if (!rate.allowed) {
+    const response = fail(429, "Too many saves. Give it a minute.", "RATE_LIMITED");
+    response.headers.set("Retry-After", String(rate.retryAfter));
+    return withRateHeaders(response, rate);
   }
 
   try {
@@ -150,8 +164,18 @@ export async function PATCH(request: Request, { params }: Params) {
         rate,
       );
     }
+    // Return the menu as it was actually stored — trimmed, blank rows dropped,
+    // an unusable model stripped. The editor renders this back, so the owner
+    // sees the saved state rather than their optimistic guess.
     return withRateHeaders(
-      NextResponse.json({ ok: true, updatedAt }, { headers: NO_STORE }),
+      NextResponse.json(
+        {
+          ok: true,
+          updatedAt,
+          menu: { slug, ...result.value, updatedAt },
+        },
+        { headers: NO_STORE },
+      ),
       rate,
     );
   } catch (error) {

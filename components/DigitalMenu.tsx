@@ -406,7 +406,7 @@ export default function DigitalMenuStudio({
       setTranslating(false);
 
       if (outcome.ok) {
-        publishItems = stitchTranslations(publishItems, outcome.translations);
+        publishItems = stitchTranslations(publishItems, outcome.translations, outcome.indices);
         setItems(publishItems);
         setTranslationNote(null);
       } else {

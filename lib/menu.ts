@@ -32,6 +32,21 @@ export const EDIT_KEY_BYTES = 24;
 /** `abc`, `chai-and-chapter`, never `-abc`, `abc-` or `a`. */
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
 
+/**
+ * Slugs a café may never have, because `app/menu/<slug>` already exists.
+ *
+ * A café actually called "Demo" would otherwise be published at `/menu/demo` —
+ * a URL this app already serves with example content, so the owner's link would
+ * show somebody else's menu and their QR code would be a lie. Suffixing with
+ * `-menu` keeps the name and gives them a page of their own.
+ */
+export const RESERVED_SLUGS = new Set(["demo", "edit", "new", "api", "menu", "order"]);
+
+/** True when a slug would collide with a static route under `/menu/`. */
+export function isReservedSlug(slug: string): boolean {
+  return RESERVED_SLUGS.has(slug.toLowerCase());
+}
+
 /** What the API accepts and the database stores. */
 export interface MenuDraft {
   cafeName: string;
@@ -51,7 +66,7 @@ export interface MenuDoc extends MenuDraft {
 
 export type MenuValidation =
   | { ok: true; value: MenuDraft }
-  | { ok: false; error: string; field?: "cafeName" | "items" };
+  | { ok: false; error: string; field?: "cafeName" | "items" | "whatsapp" };
 
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/g;
 
@@ -151,7 +166,31 @@ export function validateMenu(input: unknown): MenuValidation {
 
   // Stored pre-dialled: an owner typing the number off a visiting card gets a
   // number the order button can actually reach, not ten digits wa.me rejects.
-  const whatsapp = dialableWhatsapp(text(raw.whatsapp, 20));
+  //
+  // Validated here rather than left to the database: the row's CHECK constraint
+  // would otherwise turn a typed-in typo into a 503 "couldn't publish", which
+  // reads like our bug and hides the one field that needs fixing.
+  const whatsappRaw = text(raw.whatsapp, 20);
+  const whatsapp = dialableWhatsapp(whatsappRaw);
+
+  if (whatsappRaw.replace(/\D/g, "").length > 0) {
+    if (whatsapp.length > 15) {
+      return {
+        ok: false,
+        error:
+          "That WhatsApp number is too long. An Indian mobile is 10 digits, or 12 with the country code.",
+        field: "whatsapp",
+      };
+    }
+    if (whatsapp.length < 8) {
+      return {
+        ok: false,
+        error:
+          "That WhatsApp number looks incomplete. Ten digits (or 91 and ten digits) is what the order button can dial.",
+        field: "whatsapp",
+      };
+    }
+  }
 
   return {
     ok: true,
@@ -199,14 +238,24 @@ export function slugify(value: string): string {
     .replace(/-+$/g, "");
 
   const slug = base.length >= 3 ? base : `${base || "cafe"}-menu`;
-  return SLUG_RE.test(slug) ? slug : "cafe-menu";
+  return SLUG_RE.test(slug) ? freeSlug(slug) : "cafe-menu";
+}
+
+/** `demo` → `demo-menu`, so a café named Demo still gets its own page. */
+function freeSlug(slug: string): string {
+  if (!isReservedSlug(slug)) return slug;
+  const next = `${slug.slice(0, 40 - 5).replace(/-+$/g, "")}-menu`;
+  return SLUG_RE.test(next) ? next : "cafe-menu";
 }
 
 /** Slugs are guesses, names collide — this is what makes the second one unique. */
 export function withSuffix(slug: string, attempt: number): string {
   const suffix = attempt === 0 ? "" : `-${attempt + 1}`;
   const trimmed = slug.slice(0, 40 - suffix.length).replace(/-+$/g, "");
-  return `${trimmed}${suffix}`;
+  const candidate = `${trimmed}${suffix}`;
+  // Every attempt — including the first — is checked, so a caller that bypassed
+  // `slugify` still can't publish onto a static route.
+  return isReservedSlug(candidate) ? freeSlug(candidate) : candidate;
 }
 
 /**
@@ -218,8 +267,13 @@ export function withSuffix(slug: string, attempt: number): string {
  */
 export function dialableWhatsapp(raw: string): string {
   const digits = String(raw ?? "").replace(/[^\d]/g, "");
+
+  // Ten digits starting 6–9: an Indian mobile, which `wa.me` wants with 91.
   if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`;
+  // A trunk-prefixed number (`098765 43210`): drop the 0, keep the rest.
   if (digits.length === 11 && digits.startsWith("0")) return `91${digits.slice(1)}`;
+  // `91` + ten digits is already dialable; anything longer is left as-is for the
+  // caller to reject rather than silently truncated to the wrong person.
   return digits;
 }
 

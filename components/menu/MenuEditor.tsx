@@ -35,6 +35,7 @@ import {
   missingTranslations,
   pruneStaleTranslations,
   stitchTranslations,
+  translatedRowCount,
   translatableLines,
 } from "@/lib/menu-translate";
 import { requestTranslations } from "@/lib/studio-client";
@@ -299,9 +300,21 @@ export default function MenuEditor({ slug }: { slug: string }) {
       return;
     }
 
-    const items = stitchTranslations(draft.items, outcome.translations);
+    const items = stitchTranslations(draft.items, outcome.translations, outcome.indices);
+    const applied = translatedRowCount(items);
+
+    if (applied === 0) {
+      // Say so rather than printing "added" over an unchanged draft.
+      setTranslateNote(
+        "The translator came back without usable names. Nothing was changed — try again in a moment.",
+      );
+      return;
+    }
+
     setDraft((current) => (current ? { ...current, items } : current));
-    setTranslateNote("Hindi and Hinglish added. Save to put them on the live menu.");
+    setTranslateNote(
+      `${applied} of ${items.length} lines now have Hindi and Hinglish. Save to put them on the live menu.`,
+    );
   }, [draft, translating]);
 
   /* -------------------------------- copying ------------------------------ */

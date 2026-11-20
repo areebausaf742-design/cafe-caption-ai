@@ -179,7 +179,10 @@ export default function DishViewer({
       const observer = new ResizeObserver(resize);
       observer.observe(host);
 
+      // One loop, one frame handle. Anything drawn after cleanup — or before
+      // the model has loaded — is wasted work that keeps the tab warm.
       const loop = () => {
+        if (cancelled) return;
         frame = requestAnimationFrame(loop);
         controls.update();
         renderer.render(scene, camera);
@@ -204,6 +207,7 @@ export default function DishViewer({
       };
 
       cleanup = () => {
+        cancelled = true;
         cancelAnimationFrame(frame);
         observer.disconnect();
         controls.dispose();
@@ -254,7 +258,6 @@ export default function DishViewer({
 
           scene.add(root);
           setStage("ready");
-          loop();
         },
         (event) => {
           if (cancelled) return;
