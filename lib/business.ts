@@ -93,8 +93,12 @@ export function demoMenuUrl(origin?: string): string {
   return `${base}${MENU_DEMO_PATH}`;
 }
 
-/** Build-time value; empty when this deployment hasn't been told its origin. */
-export const MENU_DEMO_URL = demoMenuUrl();
+/**
+ * Build-time value, or an empty string when this deployment hasn't been told
+ * its origin. Empty — not a bare `/menu/demo` — so callers can tell "I have an
+ * absolute URL" from "I have a path" and fall back to the live origin.
+ */
+export const MENU_DEMO_URL = PUBLIC_SITE_ORIGIN ? demoMenuUrl() : "";
 
 /** Build a WhatsApp deep link with a pre-filled message. */
 export function whatsappUrl(message: string): string {

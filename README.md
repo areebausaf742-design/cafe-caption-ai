@@ -49,10 +49,39 @@ npm run dev                  # http://localhost:3000
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Dev server on port 3000 |
-| `npm run build` | Production build |
+| `npm run build` | Production build (`NODE_ENV=production next build`) |
 | `npm run start` | Serve the production build |
 | `npm run lint` | ESLint (`next/core-web-vitals`) |
 | `npm run typecheck` | TypeScript, no emit |
+| `npm test` | Unit tests (Vitest, `tests/**/*.test.ts`) |
+| `npm run test:watch` | The same, in watch mode while you edit |
+
+### Package manager and dependencies
+
+- **One lockfile: `package-lock.json`, one tool: `npm`.** `npm ci` installs exactly
+  the locked tree; anything else (yarn, pnpm, bun) will silently produce a
+  different tree and break the lockfile discipline the CI relies on.
+- `npm audit --omit=dev` currently reports two advisories, both inside Next's own
+  bundled `postcss` (`GHSA-qx2v-qp2m-jg93` and friends). The only fix npm offers
+  is `next@16`, a major upgrade; the exposure is a build-time CSS transform, not
+  a request path in this app, so it is tracked rather than force-upgraded. Re-run
+  `npm audit --omit=dev` after any dependency bump.
+- Dependencies are pinned to `^` ranges on current majors; a model id, an API
+  shape or a CSS token changing upstream is a build-time failure here, not a
+  runtime surprise, because `npm run typecheck` covers all of it.
+
+### Tests
+
+`npm test` runs the pure logic — the parts where a bug is silent rather than
+loud: menu validation and limits, reserved slugs, WhatsApp normalisation, price
+parsing, translation stitching, JSON extraction, body-size limits, image type
+detection, lead validation, the SSRF guard on Space downloads, and `clientIp`
+with and without `TRUST_PROXY`. No network, no database, no browser: a failure
+is a real logic failure, not a flaky environment.
+
+New behaviour that can be judged from inputs alone belongs in `tests/`. Anything
+that needs a real request belongs in the manual checklist at the end of this
+file.
 
 ---
 
@@ -1054,8 +1083,31 @@ only file that imports framer-motion apart from `MotionRoot` and the copy button
    `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (shared rate limits) and
    `SUPABASE_URL` + `SUPABASE_ANON_KEY` (lead storage). Without the last pair the
    quote form still works, it just doesn't keep a record.
+   If the site sits behind **your own** proxy rather than Vercel's edge, set
+   `TRUST_PROXY=1` so the rate limiter sees real client IPs — and only then,
+   because it states that the proxy overwrites `x-real-ip`/`x-forwarded-for`.
+   `NEXT_PUBLIC_ASSET_HOSTS` (comma-separated) pins where menu 3D models and
+   posters may be loaded from; leave it unset only if menus may reference any
+   https host.
 3. Deploy. Environment changes only apply to **new** deployments — redeploy
    after adding or editing variables.
+
+### Security headers
+
+`next.config.mjs` sets the boring, unconditional ones (nosniff, referrer policy,
+permissions policy, HSTS, production `X-Frame-Options: DENY`). `middleware.ts`
+adds a split Content-Security-Policy:
+
+- **Enforced:** `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`,
+  `form-action 'self'`, `style-src 'self' 'unsafe-inline'`, and `img-src` /
+  `media-src` / `connect-src` limited to this origin, blob/data previews, the
+  configured asset hosts and PostHog.
+- **Report-Only:** `script-src`. A nonce has to be generated per request and
+  threaded into every inline tag — including the three JSON-LD blocks that live
+  on statically rendered pages — which would force those pages to render
+  dynamically. Until that pass happens, script violations are reported rather
+  than blocked, and everything else is already enforced. See the comment at the
+  top of `middleware.ts` before tightening it.
 
 ### Custom domain (do this before selling)
 

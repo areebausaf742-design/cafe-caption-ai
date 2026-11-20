@@ -32,6 +32,7 @@ import { BlockedReply, blockReason, isRetryable } from "@/lib/gemini-retry";
 import { parsePhoto } from "@/lib/image-validate";
 import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
+import { extractJsonObject } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -114,23 +115,6 @@ function fail(
   return extra?.rate ? withRateHeaders(response, extra.rate) : response;
 }
 
-function extractJson(raw: string): unknown {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Model reply contained no JSON object.");
-    }
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
 
 async function readPhoto(image: { mimeType: string; data: string }, key: string) {
   const client = new GoogleGenerativeAI(key);
@@ -167,7 +151,9 @@ async function readPhoto(image: { mimeType: string; data: string }, key: string)
       const blocked = blockReason(response.response);
       if (blocked) throw new BlockedReply(blocked);
 
-      const dish = readDishReading(extractJson(response.response.text()));
+      const dish = readDishReading(
+        extractJsonObject(response.response.text(), "Model reply contained no JSON object."),
+      );
       if (!dish) throw new Error("Model reply had no usable dish.");
 
       return { dish, model };

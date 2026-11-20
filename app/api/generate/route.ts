@@ -55,6 +55,7 @@ import {
   TONES,
 } from "@/lib/types";
 import { parsePhoto, type PhotoInput } from "@/lib/image-validate";
+import { extractJsonObject } from "@/lib/json";
 import {
   googlePostSpec,
   menuSpec,
@@ -253,24 +254,6 @@ function cleanOptional(value: unknown, maxLength: number): string | undefined {
   return cleaned.slice(0, maxLength);
 }
 
-/** Pull a JSON object out of a model response, tolerating stray prose/fences. */
-function extractJson(raw: string): unknown {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Model response did not contain JSON.");
-    }
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /*  ERRORS                                                                    */
@@ -451,7 +434,7 @@ function interpretResponse<T>(
   }
 
   try {
-    return spec.parse(extractJson(text));
+    return spec.parse(extractJsonObject(text, "Model response did not contain JSON."));
   } catch (error) {
     throw new ModelOutputError(
       "unparsable",

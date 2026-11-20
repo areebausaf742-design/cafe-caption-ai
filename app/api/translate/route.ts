@@ -32,6 +32,7 @@ import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
 import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from "@/lib/types";
+import { extractJsonObject } from "@/lib/json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,24 +139,6 @@ function fail(
   return extra?.rate ? withRateHeaders(response, extra.rate) : response;
 }
 
-/** Pull JSON out of a model reply, tolerating fences or a stray sentence. */
-function extractJson(raw: string): unknown {
-  const cleaned = raw
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Model reply contained no JSON object.");
-    }
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
 
 /**
  * Translate one chunk, with one retry on the fallback model.
@@ -198,7 +181,10 @@ async function translateChunk(
       const blocked = blockReason(response.response);
       if (blocked) throw new BlockedReply(blocked);
 
-      const parsed = extractJson(response.response.text()) as Record<
+      const parsed = extractJsonObject(
+        response.response.text(),
+        "Model reply contained no JSON object.",
+      ) as Record<
         string,
         unknown
       >;
