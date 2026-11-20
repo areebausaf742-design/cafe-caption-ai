@@ -174,7 +174,7 @@ function FeaturedCard({ pkg }: { pkg: Package }) {
 
 function SideCard({ pkg }: { pkg: Package }) {
   return (
-    <div className="group relative flex h-full flex-col rounded-2xl border border-espresso-900/[0.13] bg-cream-50/80 px-5 py-5 backdrop-blur-sm transition-[transform,border-color,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:border-caramel-400/80 hover:shadow-[0_26px_48px_-32px_rgba(36,24,18,0.45)] focus-within:-translate-y-1 focus-within:border-caramel-400/80 sm:px-6 sm:py-6">
+    <div className="group relative flex h-full flex-col rounded-2xl border border-espresso-900/[0.13] bg-cream-50/[0.92] px-5 py-5 transition-[transform,border-color,box-shadow] duration-300 ease-out hover:-translate-y-1 hover:border-caramel-400/80 hover:shadow-[0_26px_48px_-32px_rgba(36,24,18,0.45)] focus-within:-translate-y-1 focus-within:border-caramel-400/80 sm:px-6 sm:py-6">
       <h3 className="font-display text-[19px] font-semibold leading-tight tracking-[-0.01em] text-espresso-900">
         {pkg.name}
       </h3>

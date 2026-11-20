@@ -31,6 +31,7 @@ import {
   type Tone,
 } from "@/lib/types";
 import { track } from "@/lib/analytics";
+import { copyText } from "@/lib/clipboard";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { requestGeneration, retryAfterLabel, type StudioError } from "@/lib/studio-client";
 import CopyIconButton from "@/components/studio/CopyIconButton";
@@ -131,20 +132,7 @@ export default function LocalSeoStudio({
 
   const copy = useCallback(
     async (text: string, key: string, kind: "reply" | "post" | "post_cta") => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        const scratch = document.createElement("textarea");
-        scratch.value = text;
-        scratch.setAttribute("readonly", "");
-        scratch.style.position = "fixed";
-        scratch.style.opacity = "0";
-        document.body.appendChild(scratch);
-        scratch.select();
-        const ok = document.execCommand("copy");
-        document.body.removeChild(scratch);
-        if (!ok) return;
-      }
+      if (!(await copyText(text))) return;
 
       setCopiedKey(key);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -285,6 +273,8 @@ export default function LocalSeoStudio({
 
   const switchTool = (next: SeoTool) => {
     setTool(next);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = null;
     setCopiedKey(null);
   };
 
@@ -296,6 +286,8 @@ export default function LocalSeoStudio({
       setPostState({ status: "idle", post: null, error: null });
       topicRef.current?.focus();
     }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = null;
     setCopiedKey(null);
   };
 

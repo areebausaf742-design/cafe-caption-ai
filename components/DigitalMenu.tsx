@@ -46,6 +46,7 @@ import MenuCard from "@/components/menu/MenuCard";
 import { track } from "@/lib/analytics";
 import { smoothScrollTo } from "@/lib/smooth-scroll";
 import { demoMenuUrl } from "@/lib/business";
+import { copyText } from "@/lib/clipboard";
 import { MAX_ITEMS, toDigitalMenu } from "@/lib/menu";
 import {
   hasAnyTranslation,
@@ -173,6 +174,7 @@ export default function DigitalMenuStudio({
     setOrigin(window.location.origin);
     return () => {
       if (downloadTimer.current) clearTimeout(downloadTimer.current);
+      if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
     };
   }, []);
 
@@ -297,6 +299,9 @@ export default function DigitalMenuStudio({
     setPublished(null);
     setPublishedItems(null);
     setPublishError(null);
+    if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
+    editCopyTimer.current = null;
+    setEditCopied(false);
   };
 
   /* ------------------------- editing the draft ---------------------------- */
@@ -462,14 +467,12 @@ export default function DigitalMenuStudio({
 
   const copyEditLink = useCallback(async () => {
     if (!published) return;
-    try {
-      await navigator.clipboard.writeText(published.editUrl);
-      setEditCopied(true);
-      if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
-      editCopyTimer.current = setTimeout(() => setEditCopied(false), 2200);
-    } catch {
-      // Clipboard permission can be refused; the field stays selectable.
-    }
+    // The field stays selectable when the clipboard is refused; the tick waits
+    // for a copy that actually landed.
+    if (!(await copyText(published.editUrl))) return;
+    setEditCopied(true);
+    if (editCopyTimer.current) clearTimeout(editCopyTimer.current);
+    editCopyTimer.current = setTimeout(() => setEditCopied(false), 2200);
   }, [published]);
 
   /* ------------------------------ QR code ------------------------------- */

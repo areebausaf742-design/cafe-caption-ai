@@ -27,6 +27,7 @@ import {
   recommendations,
 } from "@/lib/dish";
 import { MAX_CATEGORY, MAX_ITEM_NAME } from "@/lib/menu";
+import { createRowIds } from "@/lib/row-ids";
 import { requestDishModel, requestDishVision } from "@/lib/studio-client";
 import type { DishModel, MenuItem } from "@/lib/types";
 
@@ -117,6 +118,10 @@ export default function DishStudio({
   const [modelError, setModelError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Chips are keyed by the row object, not `name-index`: typing a new name in a
+  // row used to change the key on every keystroke and remount the chip.
+  const rowIds = useRef(createRowIds("dish-chip")).current;
 
   /**
    * One counter for the two requests this panel can have in flight. A result is
@@ -882,7 +887,7 @@ export default function DishStudio({
           const active = i === index;
           return (
             <button
-              key={`${row.name}-${i}`}
+              key={rowIds.idFor(row)}
               type="button"
               onClick={() => setSelected(i)}
               aria-pressed={active}

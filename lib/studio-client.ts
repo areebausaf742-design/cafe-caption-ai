@@ -8,7 +8,13 @@
  */
 import type { DishReading } from "@/lib/dish";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
-import type { ApiError, DishModel, GenerateRequest, GenerateResponse } from "@/lib/types";
+import type {
+  ApiError,
+  Caption,
+  DishModel,
+  GenerateRequest,
+  GenerateResponse,
+} from "@/lib/types";
 
 export interface StudioError {
   message: string;
@@ -93,6 +99,36 @@ export async function requestGeneration(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The caption tab's request: `/api/generate` with `type: "captions"`.
+ *
+ * Thin on purpose — the timeout, the error shape and the `Retry-After` parsing
+ * all live in `requestGeneration`. What belongs here is the check this tab
+ * cares about: a 200 that didn't come back as captions is a failure, not an
+ * empty result.
+ */
+export type CaptionsOutcome =
+  | { ok: true; captions: Caption[] }
+  | { ok: false; error: StudioError };
+
+export async function requestCaptions(body: GenerateRequest): Promise<CaptionsOutcome> {
+  const outcome = await requestGeneration({ ...body, type: "captions" });
+  if (!outcome.ok) return outcome;
+
+  const data = outcome.data;
+  if (data.tool !== "captions" || !Array.isArray(data.captions) || data.captions.length === 0) {
+    return {
+      ok: false,
+      error: {
+        message: "The response came back empty. Try rephrasing the description.",
+        status: 200,
+      },
+    };
+  }
+
+  return { ok: true, captions: data.captions };
 }
 
 /** "Try again in about 40s" / "…about 3 min". */
