@@ -427,14 +427,14 @@ export default function CaptionStudio() {
                 >
                   {hasPhoto ? "Anything to add?" : "Describe the photo"}{" "}
                   {hasPhoto && (
-                    <span className="font-medium text-espresso-500/80">
+                    <span className="font-medium text-espresso-500">
                       optional
                     </span>
                   )}
                 </label>
                 <span
                   className={`shrink-0 text-[10.5px] tabular-nums transition-colors ${
-                    remaining < 40 ? "text-caramel-600" : "text-espresso-500/70"
+                    remaining < 40 ? "text-caramel-600" : "text-espresso-500"
                   }`}
                 >
                   {remaining < 40
@@ -469,7 +469,7 @@ export default function CaptionStudio() {
               />
               <p
                 id="description-help"
-                className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500/90"
+                className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500"
               >
                 {hasPhoto
                   ? "Optional. Your photo is doing the heavy lifting — add a detail only if you want it in the captions."
@@ -513,7 +513,7 @@ export default function CaptionStudio() {
                   <span className="text-[12px] font-semibold text-espresso-800">
                     Café details
                   </span>
-                  <span className="truncate text-[10.5px] text-espresso-500/80">
+                  <span className="truncate text-[10.5px] text-espresso-500">
                     optional
                   </span>
                 </span>
@@ -619,7 +619,7 @@ export default function CaptionStudio() {
                             </span>
                             <span
                               className={`mt-0.5 block text-[9.5px] leading-tight ${
-                                selected ? "text-cream-200/70" : "text-espresso-500/80"
+                                selected ? "text-cream-200/70" : "text-espresso-500"
                               }`}
                             >
                               {option.blurb}
@@ -665,7 +665,7 @@ export default function CaptionStudio() {
                       </span>
                       <span
                         className={`block truncate text-[9.5px] leading-tight ${
-                          selected ? "text-cream-200/70" : "text-espresso-500/80"
+                          selected ? "text-cream-200/70" : "text-espresso-500"
                         }`}
                       >
                         {option.blurb}
@@ -695,7 +695,7 @@ export default function CaptionStudio() {
                   </>
                 )}
               </button>
-              <p className="mt-2.5 text-center text-[10.5px] text-espresso-500/80">
+              <p className="mt-2.5 text-center text-[10.5px] text-espresso-500">
                 Free to try · No account · Your photo and notes aren&apos;t stored
               </p>
             </div>
@@ -714,12 +714,12 @@ export default function CaptionStudio() {
                     {error.message}
                   </p>
                   {error.hint && (
-                    <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#93604B]">
+                    <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#87543F]">
                       {error.hint}
                     </p>
                   )}
                   {typeof error.retryAfter === "number" && (
-                    <p className="mt-1 text-[11px] font-medium text-[#93604B]">
+                    <p className="mt-1 text-[11px] font-medium text-[#87543F]">
                       Try again in about{" "}
                       {error.retryAfter < 60
                         ? `${error.retryAfter}s`

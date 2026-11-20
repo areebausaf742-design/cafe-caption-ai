@@ -343,7 +343,7 @@ export default function LocalSeoStudio({
                 </span>
                 <span
                   className={`mt-0.5 block text-[9.5px] leading-tight ${
-                    selected ? "text-cream-200/70" : "text-espresso-500/80"
+                    selected ? "text-cream-200/70" : "text-espresso-500"
                   }`}
                 >
                   {option.blurb}
@@ -375,7 +375,7 @@ export default function LocalSeoStudio({
               </label>
               <span
                 className={`shrink-0 text-[10.5px] tabular-nums transition-colors ${
-                  reviewCharsLeft < 80 ? "text-caramel-600" : "text-espresso-500/70"
+                  reviewCharsLeft < 80 ? "text-caramel-600" : "text-espresso-500"
                 }`}
               >
                 {reviewCharsLeft < 80
@@ -406,7 +406,7 @@ export default function LocalSeoStudio({
             />
             <p
               id="review-help"
-              className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500/90"
+              className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500"
             >
               Nothing is posted automatically — you copy the reply you like into
               your Google profile.
@@ -445,7 +445,7 @@ export default function LocalSeoStudio({
                 disabled={isLoading}
                 autoComplete="email"
               />
-              <p className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500/80">
+              <p className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500">
                 Used only inside 1–2★ replies, so the reviewer has a private way
                 to reach you.
               </p>
@@ -460,7 +460,7 @@ export default function LocalSeoStudio({
               >
                 What&apos;s the update?
               </label>
-              <span className="shrink-0 text-[10.5px] tabular-nums text-espresso-500/70">
+              <span className="shrink-0 text-[10.5px] tabular-nums text-espresso-500">
                 {topic.length}/{MAX_TOPIC_LENGTH}
               </span>
             </div>
@@ -479,7 +479,7 @@ export default function LocalSeoStudio({
             />
             <p
               id="post-help"
-              className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500/90"
+              className="mt-2 text-[10.5px] leading-[1.6] text-espresso-500"
             >
               One line is enough. We&apos;ll add local keywords, emojis and a call
               to action, and keep it under {GOOGLE_POST_MAX_CHARS.toLocaleString("en-IN")} characters.
@@ -602,7 +602,7 @@ export default function LocalSeoStudio({
               </>
             )}
           </button>
-          <p className="mt-2.5 text-center text-[10.5px] text-espresso-500/80">
+          <p className="mt-2.5 text-center text-[10.5px] text-espresso-500">
             Free to try · No account · Nothing is posted for you
           </p>
         </div>
@@ -621,12 +621,12 @@ export default function LocalSeoStudio({
                 {active.error.message}
               </p>
               {active.error.hint && (
-                <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#93604B]">
+                <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#87543F]">
                   {active.error.hint}
                 </p>
               )}
               {typeof active.error.retryAfter === "number" && (
-                <p className="mt-1 text-[11px] font-medium text-[#93604B]">
+                <p className="mt-1 text-[11px] font-medium text-[#87543F]">
                   Try again in {retryAfterLabel(active.error.retryAfter)}.
                 </p>
               )}
@@ -879,7 +879,7 @@ export default function LocalSeoStudio({
                         }}
                       />
                     </div>
-                    <p className="mt-1.5 text-[10px] tabular-nums text-espresso-500/80">
+                    <p className="mt-1.5 text-[10px] tabular-nums text-espresso-500">
                       {postState.post.characters.toLocaleString("en-IN")} /{" "}
                       {GOOGLE_POST_MAX_CHARS.toLocaleString("en-IN")} characters ·{" "}
                       {countWords(postState.post.body)} words

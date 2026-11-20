@@ -103,7 +103,7 @@ export default function MenuCard({
                   aria-label={`Section name for ${section.rows.length} item${section.rows.length === 1 ? "" : "s"}`}
                   placeholder="Section name"
                   maxLength={MAX_CATEGORY}
-                  className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-espresso-500 outline-none transition placeholder:text-espresso-400/70 hover:border-espresso-900/15 focus:border-caramel-400 focus:bg-white/80 focus:text-espresso-900 focus:ring-2 focus:ring-caramel-400/15 sm:text-[9.5px]"
+                  className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-espresso-500 outline-none transition placeholder:text-espresso-400 hover:border-espresso-900/15 focus:border-caramel-400 focus:bg-white/80 focus:text-espresso-900 focus:ring-2 focus:ring-caramel-400/15 sm:text-[9.5px]"
                 />
               ) : (
                 <span className="shrink-0">{section.category}</span>
@@ -312,7 +312,7 @@ function EditableRow({
         aria-invalid={flagged || undefined}
         placeholder="Item name"
         maxLength={MAX_ITEM_NAME}
-        className={`${fieldClass(nameMissing)} flex-1 px-1 py-[3px] text-base leading-[1.5] text-espresso-900 placeholder:text-espresso-400/80 sm:text-[12.5px]`}
+        className={`${fieldClass(nameMissing)} flex-1 px-1 py-[3px] text-base leading-[1.5] text-espresso-900 placeholder:text-espresso-400 sm:text-[12.5px]`}
       />
 
       <span
@@ -328,7 +328,7 @@ function EditableRow({
         placeholder="₹80"
         maxLength={MAX_PRICE}
         inputMode="text"
-        className={`${fieldClass(priceMissing)} w-[58px] shrink-0 px-1 py-[3px] text-right text-base font-semibold tabular-nums text-espresso-800 placeholder:font-normal placeholder:text-espresso-400/80 sm:w-[62px] sm:text-[12px]`}
+        className={`${fieldClass(priceMissing)} w-[58px] shrink-0 px-1 py-[3px] text-right text-base font-semibold tabular-nums text-espresso-800 placeholder:font-normal placeholder:text-espresso-400 sm:w-[62px] sm:text-[12px]`}
       />
 
       <button

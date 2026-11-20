@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "test": "vitest run",
+    "check:contrast": "node scripts/check-contrast.mjs",
     "test:watch": "vitest",
     "build": "NODE_ENV=production next build",
     "start": "next start",

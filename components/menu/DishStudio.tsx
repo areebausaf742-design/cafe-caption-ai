@@ -381,8 +381,8 @@ export default function DishStudio({
     ? "text-[9.5px] font-semibold uppercase tracking-[0.14em] text-espresso-400"
     : "text-[9px] font-semibold uppercase tracking-[0.14em] text-espresso-400";
   const inputClass = full
-    ? "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/95 px-2.5 py-2 text-[12.5px] text-espresso-900 outline-none placeholder:text-espresso-400/70 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25"
-    : "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/90 px-2 py-1.5 text-[11.5px] text-espresso-900 outline-none placeholder:text-espresso-400/70 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25";
+    ? "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/95 px-2.5 py-2 text-[12.5px] text-espresso-900 outline-none placeholder:text-espresso-400 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25"
+    : "mt-1 w-full rounded-lg border border-espresso-900/[0.14] bg-white/90 px-2 py-1.5 text-[11.5px] text-espresso-900 outline-none placeholder:text-espresso-400 focus-visible:border-caramel-500/60 focus-visible:ring-2 focus-visible:ring-caramel-500/25";
   const primaryButton = full
     ? "tap inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-espresso-900 px-3 py-2 text-[12px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
     : "tap inline-flex items-center gap-1 rounded-lg bg-espresso-900 px-2.5 py-1.5 text-[10.5px] font-semibold text-cream-50 hover:bg-espresso-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50";
@@ -409,7 +409,9 @@ export default function DishStudio({
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={preparingPhoto || generating}
-          className="tap inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2.5 py-1 text-[10.5px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
+          // 44px tall: this is a real tap target on a phone, and the input it
+          // opens is hidden (see below).
+          className="tap inline-flex min-h-[44px] items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2.5 py-1 text-[10.5px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
         >
           {preparingPhoto ? (
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -418,11 +420,15 @@ export default function DishStudio({
           )}
           {photo ? "Change" : preparingPhoto ? "Preparing…" : "Choose photo"}
         </button>
+        {/* Same pattern as PhotoDropzone: the button above is the target, so the
+            input stays out of the tab order, the a11y tree and hit-testing. */}
         <input
           ref={fileRef}
           type="file"
           accept="image/jpeg,image/png,image/webp"
-          className="sr-only"
+          className="sr-only pointer-events-none"
+          tabIndex={-1}
+          aria-hidden="true"
           aria-label={`Choose a photo of ${item.name || "this dish"}`}
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -512,7 +518,7 @@ export default function DishStudio({
             <span>{genError.message}</span>
           </p>
           {genError.hint && (
-            <p className="mt-1 pl-[18px] text-[10px] leading-[1.5] text-[#93604B]">{genError.hint}</p>
+            <p className="mt-1 pl-[18px] text-[10px] leading-[1.5] text-[#87543F]">{genError.hint}</p>
           )}
           {photo && (
             <button type="button" onClick={() => void buildModel()} className={`${quietButton} mt-1.5`}>
