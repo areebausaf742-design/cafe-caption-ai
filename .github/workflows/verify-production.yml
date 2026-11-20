@@ -3,7 +3,9 @@
 #
 # Manual: Actions → "Verify production" → Run workflow.
 # It writes two plainly-named, non-public rows (see scripts/verify-production.mjs)
-# and prints cleanup SQL.
+# and prints cleanup SQL. The matrix is committed back as `verify-report.txt` so
+# it can be read from anywhere — that file is in `paths-ignore`, so committing it
+# does not start another run.
 name: Verify production
 
 on:
@@ -16,19 +18,22 @@ on:
   push:
     branches:
       - arena/6d7b70cd-cafe-caption-ai
+    paths-ignore:
+      - verify-report.txt
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
+
       - name: Verify deployed write paths
         env:
           BASE_URL: ${{ inputs.base_url || 'https://cafe-caption-ai.vercel.app' }}
@@ -36,4 +41,15 @@ jobs:
           # the "anon INSERT refused" rows. Without them those two rows are SKIP.
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
-        run: node scripts/verify-production.mjs "$BASE_URL"
+        run: |
+          set -o pipefail
+          node scripts/verify-production.mjs "$BASE_URL" | tee verify-report.txt
+
+      - name: Commit the report
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add verify-report.txt
+          git diff --cached --quiet || git commit -m "chore: production verification report [skip ci]"
+          git push
