@@ -48,7 +48,14 @@ function fail(
   code: string,
   extra: Record<string, unknown> = {},
 ): NextResponse {
-  return NextResponse.json({ error, code, ...extra }, { status, headers: NO_STORE });
+  const response = NextResponse.json({ error, code, ...extra }, { status, headers: NO_STORE });
+  // `Retry-After` is a header, not a body field: a queue that says no should say
+  // when to come back in the one place clients actually read.
+  const retryAfter = Number(extra.retryAfter);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    response.headers.set("Retry-After", String(Math.ceil(retryAfter)));
+  }
+  return response;
 }
 
 export async function POST(request: Request) {

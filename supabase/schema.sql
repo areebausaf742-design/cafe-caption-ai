@@ -32,14 +32,16 @@ alter table public.leads alter column whatsapp drop not null;
 -- Row Level Security: the browser never reads this table.
 alter table public.leads enable row level security;
 
--- The API route uses the anon/publishable key, so it needs INSERT only.
--- There is deliberately no SELECT / UPDATE / DELETE policy.
+-- No anon access at all. Supabase's default privileges grant `anon` everything
+-- on new tables in `public`, so this is a revoke, not just a missing grant:
+-- INSERT from the browser is what let anyone holding the publishable key skip
+-- the API's validation and rate limits. Rows are written by `/api/leads` as the
+-- service role, which bypasses RLS.
+--
+-- Deliberately no SELECT / UPDATE / DELETE policy either.
+revoke insert, update, delete on public.leads from anon;
+revoke insert, update, delete on public.leads from authenticated;
 drop policy if exists "leads_insert_only" on public.leads;
-create policy "leads_insert_only"
-  on public.leads
-  for insert
-  to anon
-  with check (true);
 
 -- ---------------------------------------------------------------------------
 -- Handy queries
@@ -79,20 +81,12 @@ comment on table public.menus is
 
 alter table public.menus enable row level security;
 
+-- No table privilege for the public roles: rows are created by `/api/menus` as
+-- the service role and changed only through the functions below.
 revoke all on public.menus from anon, authenticated;
-grant insert on public.menus to anon;
 
--- The API route is the only thing that inserts, and it always hashes a fresh
--- 24-byte key. Even if the anon key leaked, it buys nothing without a hash.
+-- No INSERT policy for `anon`. Publishing is a server write.
 drop policy if exists "menus_insert_only" on public.menus;
-create policy "menus_insert_only"
-  on public.menus
-  for insert
-  to anon
-  with check (
-    edit_key_hash ~ '^[0-9a-f]{64}$'
-    and jsonb_array_length(items) between 1 and 120
-  );
 
 -- Public read: published rows only, and only these fields.
 create or replace function public.menu_public(p_slug text)
@@ -262,22 +256,31 @@ begin
   end if;
 end $$;
 
--- 3) Optional: write with the service role, not the anon key -----------------
--- Today the publish/save routes use the anon key, and RLS lets `anon` insert
--- only. That is the minimum, but it means the anon key (which ships to browsers
--- for other features and is therefore public) is enough to *attempt* a write.
--- Moving writes behind SUPABASE_SERVICE_ROLE_KEY removes even that:
+-- 3) Anonymous INSERT removed ------------------------------------------------
+-- Writes are server-only now: `/api/leads` and `/api/menus` use
+-- SUPABASE_SERVICE_ROLE_KEY (server environment only, never `NEXT_PUBLIC_*`,
+-- never in a bundle). A missing key is a 503 from those routes — there is no
+-- fallback to the publishable key, because a fallback is exactly how the anon
+-- path would quietly come back.
 --
---   1. Add SUPABASE_SERVICE_ROLE_KEY to the server environment. Never prefix it
---      with NEXT_PUBLIC_: it must never reach a bundle.
---   2. Add it to the server-only fallback in `lib/menu-store.ts` / the leads
---      route (`process.env.SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY`).
---   3. Then, and only then, close the anon door:
---
---      revoke insert on public.leads from anon;
---      revoke insert on public.menus from anon;
---      drop policy if exists "leads_insert_only" on public.leads;
---      drop policy if exists "menus_insert_only" on public.menus;
---
--- The two functions (`menu_public`, `menu_read`, `menu_save`) stay as they are:
--- they are `security definer`, so they work for whatever role calls them.
+-- The statements above already leave a fresh database in this state. This block
+-- is for a database created by an earlier version of this file, and is what
+-- `supabase/migrations/20261114120000_lock_anon_inserts.sql` applies. Every
+-- statement is a revoke or a guarded drop, so it is safe to re-run.
+revoke insert on public.leads from anon;
+revoke insert on public.leads from authenticated;
+drop policy if exists "leads_insert_only" on public.leads;
+
+revoke insert on public.menus from anon;
+revoke insert on public.menus from authenticated;
+drop policy if exists "menus_insert_only" on public.menus;
+
+-- RLS stays on. The `security definer` functions above are untouched: they run
+-- as the owner, so `menu_public()`, `menu_read()` and `menu_save()` keep working
+-- for `anon` — public pages and the capability-key editor included.
+alter table public.leads enable row level security;
+alter table public.menus enable row level security;
+
+-- The same statements live in
+-- `supabase/migrations/20261114120000_lock_anon_inserts.sql`, which is the file
+-- to run on an existing database *after* the service-role deployment is live.

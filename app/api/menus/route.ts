@@ -21,10 +21,7 @@ import {
   validateMenu,
   withSuffix,
 } from "@/lib/menu";
-import {
-  createMenuRecord,
-  menuStoreConfigured,
-} from "@/lib/menu-store";
+import { createMenuRecord, menuWriteConfigured } from "@/lib/menu-store";
 import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
 import { siteUrl } from "@/lib/site";
@@ -63,14 +60,15 @@ export async function POST(request: Request) {
     return withRateHeaders(response, rate);
   }
 
-  // 2. Configuration before any work.
-  if (!menuStoreConfigured()) {
+  // 2. Configuration before any work. Publishing is a *write*, so it needs the
+  //    service role: the publishable key can read a menu, never create one.
+  if (!menuWriteConfigured()) {
     return withRateHeaders(
       NextResponse.json(
         {
           error: "Publishing isn't switched on yet.",
           code: "PUBLISHING_DISABLED",
-          hint: "Set SUPABASE_URL and SUPABASE_ANON_KEY, then run supabase/schema.sql. The menu you just read is still yours to download.",
+          hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then run supabase/schema.sql. The menu you just read is still yours to download.",
         },
         { status: 503 },
       ),
