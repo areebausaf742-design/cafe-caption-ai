@@ -405,37 +405,36 @@ export default function DishStudio({
           <Camera className="h-3 w-3 text-caramel-600" aria-hidden />
           One photo of this dish
         </p>
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={preparingPhoto || generating}
-          // 44px tall: this is a real tap target on a phone, and the input it
-          // opens is hidden (see below).
-          className="tap inline-flex min-h-[44px] items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2.5 py-1 text-[10.5px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/45 disabled:opacity-50"
+        {/*
+          Label + full-size transparent input, the same pattern as
+          `PhotoDropzone`: the tap target and the file control are one element,
+          so it measures 44px tall rather than 1×1.
+        */}
+        <label
+          className={`tap relative inline-flex min-h-[44px] cursor-pointer items-center gap-1 rounded-lg border border-espresso-900/[0.14] bg-white/80 px-2.5 py-1 text-[10.5px] font-semibold text-espresso-700 hover:border-espresso-900/30 focus-within:ring-2 focus-within:ring-caramel-500/45 ${
+            preparingPhoto || generating ? "cursor-not-allowed opacity-50" : ""
+          }`}
         >
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            aria-label={`Choose a photo of ${item.name || "this dish"}`}
+            className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+            disabled={preparingPhoto || generating}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void choosePhoto(file);
+            }}
+          />
           {preparingPhoto ? (
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
           ) : (
             <Upload className="h-3 w-3" aria-hidden />
           )}
           {photo ? "Change" : preparingPhoto ? "Preparing…" : "Choose photo"}
-        </button>
-        {/* Same pattern as PhotoDropzone: the button above is the target, so the
-            input stays out of the tab order, the a11y tree and hit-testing. */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          className="sr-only pointer-events-none"
-          tabIndex={-1}
-          aria-hidden="true"
-          aria-label={`Choose a photo of ${item.name || "this dish"}`}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (file) void choosePhoto(file);
-          }}
-        />
+        </label>
       </div>
 
       {photo ? (

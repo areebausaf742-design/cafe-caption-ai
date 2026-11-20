@@ -68,11 +68,6 @@ export default function PhotoDropzone({
   const inputId = useId();
   const helpId = `${inputId}-help`;
 
-  const openPicker = useCallback(() => {
-    if (disabled || preparing) return;
-    inputRef.current?.click();
-  }, [disabled, preparing]);
-
   const accept = useCallback(
     (files: FileList | null | undefined) => {
       const file = files?.[0];
@@ -95,33 +90,6 @@ export default function PhotoDropzone({
         )}
       </div>
 
-      {/*
-        Visually hidden, and deliberately *not* a control anyone can reach: the
-        dropzone below is the tap target (116px tall, full width, well past the
-        44px minimum) and it carries the accessible name and help text. This
-        input exists only so `openPicker()` can raise the native file dialog, so
-        it is out of the tab order, out of the a11y tree and off the hit-test —
-
-        otherwise automated tap-target audits measure this 1×1 box and report the
-        upload as unhittable.
-      */}
-      <input
-        id={inputId}
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="sr-only pointer-events-none"
-        tabIndex={-1}
-        aria-hidden="true"
-        aria-label="Upload a photo of your café or food"
-        aria-describedby={helpId}
-        disabled={disabled || preparing}
-        onChange={(event) => {
-          accept(event.target.files);
-          // Reset so picking the same file twice still fires onChange.
-          event.target.value = "";
-        }}
-      />
 
       {image ? (
         <m.div
@@ -151,15 +119,31 @@ export default function PhotoDropzone({
               </span>{" "}
               · ready to send
             </p>
-            <button
-              type="button"
-              onClick={openPicker}
-              disabled={disabled || preparing}
-              className="tap mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-espresso-600 underline decoration-espresso-900/25 underline-offset-2 hover:text-espresso-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40 disabled:opacity-50"
+            {/*
+              The input *is* the control: a 44px-tall transparent overlay
+              covering this label, so the tap target is the whole "Replace"
+              strip and the browser opens the picker natively. A 1×1 `sr-only`
+              input next to a button is the pattern tap-target audits flag.
+            */}
+            <label
+              className={`relative mt-1 inline-flex min-h-[44px] cursor-pointer items-center gap-1 rounded text-[10.5px] font-semibold text-espresso-600 underline decoration-espresso-900/25 underline-offset-2 focus-within:ring-2 focus-within:ring-caramel-500/40 ${
+                disabled || preparing ? "cursor-not-allowed opacity-50" : "hover:text-espresso-900"
+              }`}
             >
+              <input
+                type="file"
+                accept="image/*"
+                aria-label="Replace the photo"
+                className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                disabled={disabled || preparing}
+                onChange={(event) => {
+                  accept(event.target.files);
+                  event.target.value = "";
+                }}
+              />
               <RefreshCw className="h-3 w-3" />
               Replace
-            </button>
+            </label>
           </div>
 
           <button
@@ -174,9 +158,7 @@ export default function PhotoDropzone({
           </button>
         </m.div>
       ) : (
-        <button
-          type="button"
-          onClick={openPicker}
+        <label
           onDragOver={(event) => {
             if (disabled || preparing) return;
             event.preventDefault();
@@ -208,14 +190,38 @@ export default function PhotoDropzone({
               onSelect(firstImage);
             }
           }}
-          disabled={disabled || preparing}
-          aria-describedby={helpId}
-          className={`group relative flex min-h-[116px] w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform,box-shadow] duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-caramel-500/40 disabled:cursor-not-allowed disabled:opacity-60 ${
-            dragging
-              ? "scale-[1.01] border-caramel-500 bg-caramel-100/70 shadow-[0_16px_36px_-24px_rgba(201,128,60,0.85)]"
-              : "border-espresso-900/[0.18] bg-white/40 hover:border-caramel-400/70 hover:bg-white/70"
-          }`}
+          className="group relative block"
         >
+          {/*
+            The whole zone is the file input: transparent, covering the dashed
+            box, so the browser opens the picker natively and every audit that
+            measures this element sees 116px × full width rather than a 1×1
+            `sr-only` stub. Nothing is hidden from assistive tech — the input is
+            the labelled control, and the copy below describes it.
+          */}
+          <input
+            id={inputId}
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            aria-label="Upload a photo of your café or food"
+            aria-describedby={helpId}
+            className="peer absolute inset-0 z-10 h-full w-full cursor-pointer rounded-xl opacity-0 disabled:cursor-not-allowed"
+            disabled={disabled || preparing}
+            onChange={(event) => {
+              accept(event.target.files);
+              // Reset so picking the same file twice still fires onChange.
+              event.target.value = "";
+            }}
+          />
+
+          <div
+            className={`flex min-h-[116px] w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform,box-shadow] duration-200 ease-out peer-focus-visible:ring-2 peer-focus-visible:ring-caramel-500/40 ${
+              dragging
+                ? "scale-[1.01] border-caramel-500 bg-caramel-100/70 shadow-[0_16px_36px_-24px_rgba(201,128,60,0.85)]"
+                : "border-espresso-900/[0.18] bg-white/40 group-hover:border-caramel-400/70 group-hover:bg-white/70"
+            } ${disabled || preparing ? "cursor-not-allowed opacity-60" : ""}`}
+          >
           <span
             className={`grid h-10 w-10 place-items-center rounded-full transition duration-200 ${
               dragging
@@ -256,7 +262,8 @@ export default function PhotoDropzone({
               className="shimmer mt-1 block h-1 w-24 overflow-hidden rounded-full bg-espresso-900/[0.08]"
             />
           )}
-        </button>
+          </div>
+        </label>
       )}
 
       {error && (
