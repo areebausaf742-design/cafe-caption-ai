@@ -55,6 +55,7 @@ npm run dev                  # http://localhost:3000
 | `npm run typecheck` | TypeScript, no emit |
 | `npm test` | Unit tests (Vitest, `tests/**/*.test.ts`) |
 | `npm run test:watch` | The same, in watch mode while you edit |
+| `npm run check:contrast` | WCAG AA check on every text colour the UI uses |
 
 ### Package manager and dependencies
 
@@ -1096,18 +1097,42 @@ only file that imports framer-motion apart from `MotionRoot` and the copy button
 
 `next.config.mjs` sets the boring, unconditional ones (nosniff, referrer policy,
 permissions policy, HSTS, production `X-Frame-Options: DENY`). `middleware.ts`
-adds a split Content-Security-Policy:
+applies a split Content-Security-Policy, built in `lib/csp.ts` so it can be
+unit-tested (`tests/csp.test.ts`):
 
 - **Enforced:** `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`,
-  `form-action 'self'`, `style-src 'self' 'unsafe-inline'`, and `img-src` /
-  `media-src` / `connect-src` limited to this origin, blob/data previews, the
-  configured asset hosts and PostHog.
-- **Report-Only:** `script-src`. A nonce has to be generated per request and
-  threaded into every inline tag — including the three JSON-LD blocks that live
-  on statically rendered pages — which would force those pages to render
-  dynamically. Until that pass happens, script violations are reported rather
-  than blocked, and everything else is already enforced. See the comment at the
-  top of `middleware.ts` before tightening it.
+  `form-action 'self'`, `upgrade-insecure-requests`, and explicit allowlists for
+  `style-src` (`'self' 'unsafe-inline'` + `https://fonts.googleapis.com`),
+  `font-src` (`'self' data:` + `https://fonts.gstatic.com`), and `img-src` /
+  `media-src` / `connect-src` (this origin, blob/data previews, the configured
+  asset hosts, PostHog's API and `-assets` host). **Every source is a literal
+  origin — no `https:`, no `*`.**
+- **Report-Only:** `script-src` (plus `worker-src`, which PostHog's recorder
+  uses). A nonce has to be generated per request and threaded into every inline
+  tag — including the three JSON-LD blocks that live on statically rendered
+  pages — which would force those pages to render dynamically. Until that pass
+  happens, script violations are reported rather than blocked, and everything
+  else is already enforced.
+
+Two rules that are easy to get wrong, and are now asserted rather than assumed:
+
+1. `upgrade-insecure-requests` is ignored in a report-only policy (the browser
+   says so in the console), so it lives **only** in the enforced one.
+2. The fonts are loaded from Google by `<link>` in `app/layout.tsx`. If those two
+   origins are missing from `style-src`/`font-src`, the entire site silently
+   renders in fallback serif. `tests/csp.test.ts` fails the build if they go
+   missing. (Moving to `next/font/google` would self-host them and drop the
+   entries, but it fetches at build time — a Google outage would then fail a
+   deploy, and the build has no such dependency today.)
+
+### Text contrast
+
+`npm run check:contrast` reads the palette from `tailwind.config.ts`, finds every
+`text-*` utility used in `app/` and `components/`, and checks each against the
+worst light surface it can land on (cream, white, caramel chips, the error tint)
+using the WCAG AA 4.5:1 rule. Tokens that are only ever icons, or only ever on
+the dark espresso panels, are listed in the script with a reason. It exits
+non-zero on a failure, so a palette tweak can't quietly break legibility.
 
 ### Custom domain (do this before selling)
 

@@ -615,7 +615,7 @@ export default function DigitalMenuStudio({
             </>
           )}
         </button>
-        <p className="mt-2.5 text-center text-[10.5px] text-espresso-500/80">
+        <p className="mt-2.5 text-center text-[10.5px] text-espresso-500">
           Free to try · No account · Your menu photo isn&apos;t stored
         </p>
       </div>
@@ -633,12 +633,12 @@ export default function DigitalMenuStudio({
                 {error.message}
               </p>
               {error.hint && (
-                <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#93604B]">
+                <p className="mt-1 break-words text-[11.5px] leading-[1.6] text-[#87543F]">
                   {error.hint}
                 </p>
               )}
               {typeof error.retryAfter === "number" && (
-                <p className="mt-1 text-[11px] font-medium text-[#93604B]">
+                <p className="mt-1 text-[11px] font-medium text-[#87543F]">
                   Try again in {retryAfterLabel(error.retryAfter)}.
                 </p>
               )}
@@ -812,7 +812,7 @@ export default function DigitalMenuStudio({
                     </div>
                   </div>
 
-                  <p className="mt-2.5 break-all text-[9.5px] leading-tight text-espresso-500/80">
+                  <p className="mt-2.5 break-all text-[9.5px] leading-tight text-espresso-500">
                     {qrUrl.replace(/^https?:\/\//, "")}
                   </p>
 
@@ -905,7 +905,7 @@ export default function DigitalMenuStudio({
                         )}
                       </button>
 
-                      <p className="text-[9px] leading-[1.5] text-espresso-500/80">
+                      <p className="text-[9px] leading-[1.5] text-espresso-500">
                         The editor link is the only way back in — bookmark it. No
                         account, no password reset.
                       </p>
@@ -936,7 +936,7 @@ export default function DigitalMenuStudio({
                           {publishError}
                         </p>
                       ) : (
-                        <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-500/70">
+                        <p className="mt-2 text-[9.5px] leading-[1.5] text-espresso-500">
                           {menu
                             ? "Puts it live on its own link, with Hindi and Hinglish for customers who need them. No account needed."
                             : "Read a menu photo first, then publish it."}
@@ -1179,7 +1179,7 @@ function OrderPanel({
       ) : (
         <p
           id="menu-order-hint"
-          className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500/80"
+          className="mt-1.5 text-[10px] leading-[1.55] text-espresso-500"
         >
           Ten digits — we add the +91. Nothing is sent anywhere.
         </p>
@@ -1205,7 +1205,7 @@ function OrderPanel({
             />
           </TrackedLink>
 
-          <p className="mt-1.5 break-all text-[9.5px] leading-[1.5] text-espresso-500/80">
+          <p className="mt-1.5 break-all text-[9.5px] leading-[1.5] text-espresso-500">
             {link}
           </p>
 

@@ -275,7 +275,7 @@ function TrustBadge() {
           on launch day, you don&apos;t pay the 50% balance.
         </p>
 
-        <p className="text-[10.5px] leading-[1.65] text-espresso-500/80">
+        <p className="text-[10.5px] leading-[1.65] text-espresso-500">
           50% to book your slot, 50% on launch · UPI or bank transfer · Invoice
           included
         </p>

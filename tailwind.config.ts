@@ -26,7 +26,11 @@ const config: Config = {
           100: "#E7DCD1",
           200: "#D6C6B8",
           300: "#B3A192",
-          400: "#8F7764",
+          // 400 is the muted-label colour (eyebrows, meta lines, helper text).
+          // The old #8F7764 measured 3.9:1 on cream — under WCAG AA for text —
+          // so it is darkened just enough to clear 4.5:1 on every surface we
+          // put it on (cream 50/100/200, white, caramel-100).
+          400: "#75614F",
           500: "#6B5544",
           600: "#5A4536",
           700: "#4A3527",
@@ -44,14 +48,17 @@ const config: Config = {
           300: "#EDBB7C",
           400: "#E2A25C",
           500: "#C9803C",
-          600: "#A9632C",
+          // 600 is used for text (links, "from the photo", price notes); the
+          // old #A9632C was 4.3:1 on cream, 3.98:1 on caramel-100.
+          600: "#9C5827",
           700: "#854A1E",
         },
         // Secondary accent — matcha / sage (used sparingly)
         sage: {
           100: "#E8EEE0",
           300: "#B7C7A5",
-          500: "#7D9668",
+          // Was #7D9668 (3.0:1 on cream — unreadable as text at 10-11px).
+          500: "#547042",
         },
       },
       fontFamily: {

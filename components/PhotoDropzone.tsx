@@ -86,22 +86,33 @@ export default function PhotoDropzone({
       <div className="mb-2 flex items-end justify-between gap-3">
         <span className="text-[12.5px] font-semibold text-espresso-800 sm:text-[13px]">
           Photo{" "}
-          <span className="font-medium text-espresso-500/80">optional</span>
+          <span className="font-medium text-espresso-500">optional</span>
         </span>
         {image && (
-          <span className="shrink-0 text-[10.5px] tabular-nums text-espresso-500/80">
+          <span className="shrink-0 text-[10.5px] tabular-nums text-espresso-500">
             {image.width}×{image.height}
           </span>
         )}
       </div>
 
+      {/*
+        Visually hidden, and deliberately *not* a control anyone can reach: the
+        dropzone below is the tap target (116px tall, full width, well past the
+        44px minimum) and it carries the accessible name and help text. This
+        input exists only so `openPicker()` can raise the native file dialog, so
+        it is out of the tab order, out of the a11y tree and off the hit-test —
+
+        otherwise automated tap-target audits measure this 1×1 box and report the
+        upload as unhittable.
+      */}
       <input
         id={inputId}
         ref={inputRef}
         type="file"
         accept="image/*"
-        className="sr-only"
+        className="sr-only pointer-events-none"
         tabIndex={-1}
+        aria-hidden="true"
         aria-label="Upload a photo of your café or food"
         aria-describedby={helpId}
         disabled={disabled || preparing}
@@ -133,7 +144,7 @@ export default function PhotoDropzone({
             <p className="truncate text-[11.5px] font-semibold text-espresso-900">
               {image.fileName}
             </p>
-            <p className="mt-0.5 truncate text-[10.5px] tabular-nums text-espresso-500/90">
+            <p className="mt-0.5 truncate text-[10.5px] tabular-nums text-espresso-500">
               {formatBytes(image.originalBytes)} →{" "}
               <span className="font-semibold text-caramel-600">
                 {formatBytes(image.bytes)}
@@ -229,7 +240,7 @@ export default function PhotoDropzone({
 
           <span
             id={helpId}
-            className="max-w-[34ch] text-[10.5px] leading-[1.55] text-espresso-500/85"
+            className="max-w-[34ch] text-[10.5px] leading-[1.55] text-espresso-500"
           >
             {preparing
               ? "Shrinking it in your browser so it uploads fast."
@@ -259,7 +270,7 @@ export default function PhotoDropzone({
       )}
 
       {!image && !error && !preparing && showFallbackHint && (
-        <p className="mt-2 flex items-center gap-1.5 text-[10.5px] leading-[1.55] text-espresso-500/80">
+        <p className="mt-2 flex items-center gap-1.5 text-[10.5px] leading-[1.55] text-espresso-500">
           <ImagePlus className="h-3 w-3 shrink-0" />
           No photo handy? Just describe it below — no upload needed.
         </p>
