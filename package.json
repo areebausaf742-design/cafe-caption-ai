@@ -8,6 +8,7 @@
     "test": "vitest run",
     "check:contrast": "node scripts/check-contrast.mjs",
     "check:prod": "node scripts/check-prod.mjs",
+    "verify:release": "node scripts/verify-production.mjs",
     "test:watch": "vitest",
     "build": "cross-env NODE_ENV=production next build",
     "start": "next start",

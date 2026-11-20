@@ -1,0 +1,39 @@
+# Runs the rollout verification from GitHub's runners, because the agent sandbox
+# it was written in has no egress to the deployment.
+#
+# Manual: Actions → "Verify production" → Run workflow.
+# It writes two plainly-named, non-public rows (see scripts/verify-production.mjs)
+# and prints cleanup SQL.
+name: Verify production
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Deployment to check
+        required: false
+        default: https://cafe-caption-ai.vercel.app
+  push:
+    branches:
+      - arena/6d7b70cd-cafe-caption-ai
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify deployed write paths
+        env:
+          BASE_URL: ${{ inputs.base_url || 'https://cafe-caption-ai.vercel.app' }}
+          # Optional: add these as repository *variables* (they are public) to get
+          # the "anon INSERT refused" rows. Without them those two rows are SKIP.
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: node scripts/verify-production.mjs "$BASE_URL"
