@@ -145,10 +145,12 @@ export const TESTIMONIALS = [];                     // hidden until you add real
 section, contact card and footer all read it, so one edit updates all four. The
 value above is a placeholder; swap in your real Cal.com (or Calendly) link.
 
-**Email:** `CONTACT_EMAIL` is `hello@cafecaption.tech`. That address only works
-once the domain is live *and* a mailbox or forwarding rule exists for it — until
-then, messages sent there vanish silently. Point it back at your Gmail for launch
-week if forwarding isn’t ready.
+**Email:** `CONTACT_EMAIL` is **`areebausaf742@gmail.com`** — a real inbox, not a
+placeholder. The site previously used `hello@cafecaption.tech`, which only
+receives once the domain is live *and* a mailbox or forwarding rule exists for
+it; until then anything sent there vanished silently. Swap this one line once
+that mailbox exists. It feeds the contact section, footer, `/privacy`, `/terms`
+and the Organization/Person JSON-LD, so there is nothing else to edit.
 
 **About + recent work:** `ABOUT` and `RECENT_WORK` live in the same file. Set
 `ABOUT.photo` to a file in `public/` (e.g. `"/areeb.jpg"`) once you have a square
