@@ -86,7 +86,7 @@ export default async function MenuPage({ params }: Props) {
 
   if (!menuStoreConfigured()) {
     return (
-      <main className="mx-auto w-full max-w-xl px-4 pt-16 pb-20 text-center sm:px-6">
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-xl px-4 pt-16 pb-20 text-center sm:px-6">
         <p className="label">Menus</p>
         <h1 className="mt-3 font-display text-[1.7rem] font-semibold leading-tight text-espresso-900">
           Live menus aren&apos;t switched on yet.
@@ -111,7 +111,7 @@ export default async function MenuPage({ params }: Props) {
   } catch (error) {
     console.error("[menu] read failed:", error);
     return (
-      <main className="mx-auto w-full max-w-xl px-4 pt-16 pb-20 text-center sm:px-6">
+      <main id="main" tabIndex={-1} className="mx-auto w-full max-w-xl px-4 pt-16 pb-20 text-center sm:px-6">
         <p className="label">Menu</p>
         <h1 className="mt-3 font-display text-[1.7rem] font-semibold leading-tight text-espresso-900">
           This menu&apos;s taking a minute.
@@ -124,6 +124,13 @@ export default async function MenuPage({ params }: Props) {
     );
   }
 
+  // No `loading.tsx` in this folder, and please don't add one back: a loading
+  // boundary makes Next flush the HTML shell — with a 200 — before this line
+  // runs, so a menu that has been unpublished or mistyped would answer
+  // "200 OK" with a not-found body. That is a soft 404, which search engines
+  // treat as a broken page and visitors see as a slow, empty state.
+  // Verified both ways with `next start` against a stub store: without the
+  // boundary this responds 404, with it 200.
   if (!menu) notFound();
 
   const updated = menu.updatedAt
@@ -140,6 +147,8 @@ export default async function MenuPage({ params }: Props) {
 
   return (
     <main
+      id="main"
+      tabIndex={-1}
       className={`mx-auto w-full max-w-xl px-4 pt-8 sm:px-6 sm:pt-12 ${
         // Room for the fixed cart bar, which only appears once something is in it.
         orderable ? "pb-32 sm:pb-28" : "pb-16"

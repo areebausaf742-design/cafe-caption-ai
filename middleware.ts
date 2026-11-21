@@ -10,8 +10,10 @@ import { buildCsp } from "@/lib/csp";
  * for why `script-src` is report-only while everything else is enforced.
  *
  * The two things that must never regress, both covered by `tests/csp.test.ts`:
- *   - the Google Fonts origins are allowlisted (they are loaded by `<link>` in
- *     `app/layout.tsx`), otherwise the whole site renders in fallback serif;
+ *   - no third-party font host is allowed, because there is no third-party font:
+ *     the families are self-hosted from `@fontsource-variable` and served from
+ *     `/_next/static`. A Google Fonts origin reappearing here would mean a
+ *     stylesheet came back on the critical path;
  *   - `upgrade-insecure-requests` appears only in the enforced policy, because
  *     browsers ignore it in a report-only one and log a warning about it.
  */

@@ -14,6 +14,11 @@ Built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS**,
 **Lucide icons**, **Google Gemini** and an optional **Supabase** lead store. The
 Gemini key is read only inside a `server-only` Route Handler.
 
+> **Taking this project over, or buying it?** Start with
+> [`docs/HANDOVER.md`](docs/HANDOVER.md) — accounts to transfer, which migrations
+> are applied, the known limitations, and a buyer's first day. This README is the
+> developer's manual; that document is the handover.
+
 ---
 
 ## What's on the site
@@ -1240,6 +1245,9 @@ switch is an environment change, not a code change.
 ---
 
 ## Before you sell
+
+Work through [`docs/HANDOVER.md`](docs/HANDOVER.md) §6 and §12 as well — the
+accounts and the migrations are what a buyer's diligence actually checks.
 
 - [ ] Replace the placeholder-free `CONTACT_PHONE` if it ever changes, and test
       the WhatsApp button from a phone.

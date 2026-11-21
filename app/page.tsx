@@ -63,7 +63,7 @@ const SECTION = "mx-auto mt-16 w-full max-w-5xl px-4 sm:mt-28 sm:px-6";
 
 export default function HomePage() {
   return (
-    <main className="pb-0">
+    <main id="main" tabIndex={-1} className="pb-0">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(serviceLd) }}

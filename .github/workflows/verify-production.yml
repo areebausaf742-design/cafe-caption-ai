@@ -4,8 +4,8 @@
 # Manual: Actions → "Verify production" → Run workflow.
 # It writes two plainly-named, non-public rows (see scripts/verify-production.mjs)
 # and prints cleanup SQL. The matrix is committed back as `verify-report.txt` so
-# it can be read from anywhere — that file is in `paths-ignore`, so committing it
-# does not start another run.
+# it can be read from anywhere. Manual-only means that commit cannot start
+# another run — which is the other reason this trigger is not a push filter.
 name: Verify production
 
 on:
@@ -15,11 +15,12 @@ on:
         description: Deployment to check
         required: false
         default: https://cafe-caption-ai.vercel.app
-  push:
-    branches:
-      - arena/6d7b70cd-cafe-caption-ai
-    paths-ignore:
-      - verify-report.txt
+  # Manual only, on purpose: every run writes two real rows to the production
+  # database and leaves the cleanup SQL for a human. Triggering that on every
+  # merge would fill the tables with junk nobody reads.
+  #
+  # (This used to be pinned to a long-merged agent branch, which meant it had
+  # silently stopped running at all.)
 
 permissions:
   contents: write
