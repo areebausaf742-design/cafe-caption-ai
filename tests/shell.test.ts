@@ -131,6 +131,15 @@ describe("the repository is sellable, not just runnable", () => {
     expect(pkg.author).toBeTruthy();
   });
 
+  it("has a contact address that actually receives mail", async () => {
+    // A placeholder address is the quietest way to lose a sale's first enquiry:
+    // the form posts to the CRM, but the mailto: links and the JSON-LD both
+    // point at this, and nothing bounces visibly.
+    const { CONTACT_EMAIL } = await import("@/lib/business");
+    expect(CONTACT_EMAIL).toMatch(/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i);
+    expect(CONTACT_EMAIL).not.toMatch(/example\.(com|org)|yourdomain|@cafecaption\.tech/i);
+  });
+
   it("ships a handover document", () => {
     const handover = source("docs/HANDOVER.md");
     expect(handover).toContain("Known limitations");

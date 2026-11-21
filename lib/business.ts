@@ -11,13 +11,18 @@
 /* -------------------------------------------------------------------------- */
 
 /**
- * Your email — shown in the contact section, footer and structured data.
+ * Your email — shown in the contact section, footer, legal pages and the
+ * Organization/Person structured data.
  *
- * ⚠️ This only works once the domain is live AND a mailbox (or forwarding rule)
- * exists for it. Until then, enquiries sent here disappear silently. Swap back
- * to "areebausaf742@gmail.com" for the launch week if forwarding isn't ready.
+ * A Gmail address on purpose, not as a placeholder: `hello@cafecaption.tech`
+ * only receives once the domain is live *and* a mailbox or forwarding rule
+ * exists for it, and until then every enquiry sent there disappears with no
+ * bounce to warn anyone. This one always arrives.
+ *
+ * When the domain mailbox exists, change this single line (and the README's
+ * note) — every link, mailto: and schema block reads from here.
  */
-export const CONTACT_EMAIL = "hello@cafecaption.tech";
+export const CONTACT_EMAIL = "areebausaf742@gmail.com";
 
 /** Your WhatsApp number: digits only, with country code, no "+" or spaces. */
 export const CONTACT_PHONE = "919044996869";
