@@ -54,10 +54,22 @@ export interface RateLimitResult {
  * burst spread across cold starts walks straight through it. Anything that
  * costs money upstream (Gemini) needs a limit that all instances share.
  *
- * So: Upstash Redis over its REST API when `UPSTASH_REDIS_REST_URL` and
- * `UPSTASH_REDIS_REST_TOKEN` are set (no SDK, no extra dependency, one `fetch`),
- * and the in-memory map — correct for local dev and a single long-lived server —
- * when they aren't.
+ * So, in order of preference:
+ *
+ *   1. **Upstash Redis** over its REST API, when `UPSTASH_REDIS_REST_URL` and
+ *      `UPSTASH_REDIS_REST_TOKEN` are set. No SDK, one `fetch`.
+ *   2. **Postgres**, through `rate_limit_hit()` / `rate_limit_peek()` in
+ *      `supabase/migrations/20261121100000_rate_limit_store.sql`, whenever the
+ *      Supabase service-role key is present. This is a fixed window in a table
+ *      with a single atomic upsert — one shared counter for every isolate, with
+ *      no extra account, secret or outage mode. Every deployment of this app
+ *      already has the database, so this is the default rather than a fallback.
+ *   3. **The in-memory map** — correct for local dev and a single long-lived
+ *      server, wrong for serverless pricing. See below for when it is refused.
+ *
+ * Upstash is therefore an accelerator, not a prerequisite: it is faster and keeps
+ * the counter out of the primary database, but its absence no longer takes the
+ * paid tools down.
  *
  * What happens when there is no Redis at all depends on the environment and on
  * what the request costs. In production a paid route with no shared limiter is
@@ -78,8 +90,28 @@ export interface RateLimitResult {
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, "");
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-/** Whether a shared limiter is *supposed* to exist. */
-const SHARED_CONFIGURED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, "");
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+/**
+ * The Postgres store is usable when we have a URL and the service key: the
+ * counters are `service_role`-only, because a budget anyone can spend or read
+ * is not a budget.
+ *
+ * `supabaseLimiterMissing` flips if the RPC answers 404, which means the
+ * migration hasn't been applied. That is a deployment mistake, not an outage —
+ * saying "try again in 30 seconds" would be a lie — so it is remembered and
+ * reported once.
+ */
+const SUPABASE_LIMITER_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_KEY);
+let supabaseLimiterMissing = false;
+
+/** Whether a shared limiter is *supposed* to exist, right now. */
+function hasSharedStore(): boolean {
+  const upstash = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
+  if (upstash) return true;
+  return SUPABASE_LIMITER_CONFIGURED && !supabaseLimiterMissing;
+}
 
 /** How long a fail-closed route asks the client to wait during an outage. */
 const UNAVAILABLE_RETRY_SECONDS = 30;
@@ -123,7 +155,7 @@ function warnLocalOnly(namespace: string) {
   if (warnedLocalOnly) return;
   warnedLocalOnly = true;
   console.warn(
-    `[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN are not set — "${namespace}" is limited per instance only. Set them to enforce these limits across deployments.`,
+    `[rate-limit] No shared limiter configured — "${namespace}" is limited per instance only. Set SUPABASE_SERVICE_ROLE_KEY (Postgres store) or UPSTASH_REDIS_REST_URL/TOKEN to share the budget across instances.`,
   );
 }
 
@@ -266,7 +298,7 @@ function warnNoSharedStore(namespace: string) {
   if (warnedNoSharedStore) return;
   warnedNoSharedStore = true;
   console.error(
-    `[rate-limit] No shared limiter in production — refusing "${namespace}" rather than serving it unmetered. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN. (Per-instance limits can be re-enabled deliberately with RATE_LIMIT_ALLOW_MEMORY_LIMITS=1.)`,
+    `[rate-limit] No shared limiter in production — refusing "${namespace}" rather than serving it unmetered. Set SUPABASE_SERVICE_ROLE_KEY (the Postgres store, no new account needed) or UPSTASH_REDIS_REST_URL/TOKEN. (Per-instance limits can be re-enabled deliberately with RATE_LIMIT_ALLOW_MEMORY_LIMITS=1.)`,
   );
 }
 
@@ -275,7 +307,7 @@ function warnMemoryInProduction(namespace: string) {
   if (warnedMemoryInProduction) return;
   warnedMemoryInProduction = true;
   console.warn(
-    `[rate-limit] RATE_LIMIT_ALLOW_MEMORY_LIMITS=1 — "${namespace}" is metered by a per-instance map that a burst across isolates can exceed. Configure Upstash and remove that variable to fail closed.`,
+    `[rate-limit] RATE_LIMIT_ALLOW_MEMORY_LIMITS=1 — "${namespace}" is metered by a per-instance map that a burst across isolates can exceed. Set the shared store (SUPABASE_SERVICE_ROLE_KEY) and remove that variable to fail closed.`,
   );
 }
 
@@ -365,6 +397,94 @@ async function redisWindow(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Postgres (shared across instances, no extra account)                      */
+/* -------------------------------------------------------------------------- */
+
+let warnedMissingLimiter = false;
+function warnMissingLimiter() {
+  if (warnedMissingLimiter) return;
+  warnedMissingLimiter = true;
+  console.error(
+    "[rate-limit] rate_limit_hit() is missing — apply supabase/migrations/20261121100000_rate_limit_store.sql. Until then this deployment has no shared limiter.",
+  );
+}
+
+/**
+ * The same fixed window, held in Postgres.
+ *
+ * One `insert ... on conflict do update ... returning` is a single atomic
+ * statement, so two isolates cannot both read five and both write six. The
+ * window belongs to whoever created it (the update only restarts the clock when
+ * the old one has expired), which is what stops a burst from pushing the reset
+ * time forward and granting itself an infinite budget.
+ *
+ * Returns `null` when it didn't answer, which is the signal to fall through to
+ * the next backend — the caller decides what that means for its route.
+ */
+async function supabaseWindow(
+  request: Request,
+  options: RateLimitOptions,
+  spend: boolean,
+  now: number,
+): Promise<RateLimitResult | null> {
+  if (!SUPABASE_LIMITER_CONFIGURED || supabaseLimiterMissing) return null;
+
+  const key = `rl:${options.namespace}:${bucketKey(request, options.namespace)}`;
+  const rpc = spend ? "rate_limit_hit" : "rate_limit_peek";
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${rpc}`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        p_key: key,
+        // Seconds: SQL intervals are the store's unit, milliseconds are ours.
+        p_window: Math.max(1, Math.round(options.windowMs / 1000)),
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REDIS_TIMEOUT_MS),
+    });
+
+    if (response.status === 404) {
+      // PostgREST answers 404 for a function that doesn't exist.
+      supabaseLimiterMissing = true;
+      warnMissingLimiter();
+      return null;
+    }
+    if (!response.ok) throw new Error(`rate-limit rpc ${response.status}`);
+
+    const body = (await response.json()) as { count?: number; resetAt?: number } | null;
+    const count = Number(body?.count ?? 0) || 0;
+    const resetAtSeconds = Number(body?.resetAt ?? 0) || 0;
+    const resetMs = resetAtSeconds > 0 ? resetAtSeconds * 1000 : now + options.windowMs;
+
+    return summarise(count, options, now, spend, resetMs - now);
+  } catch (error) {
+    warnOnce(error);
+    return null;
+  }
+}
+
+/**
+ * The shared backends, in order. `null` means neither answered — the caller
+ * turns that into a refusal for paid routes and a local count for free ones.
+ */
+async function sharedWindow(
+  request: Request,
+  options: RateLimitOptions,
+  spend: boolean,
+  now: number,
+): Promise<RateLimitResult | null> {
+  const redis = await redisWindow(request, options, spend, now);
+  if (redis) return redis;
+  return supabaseWindow(request, options, spend, now);
+}
+
+/* -------------------------------------------------------------------------- */
 /*  In-memory map (single instance, and the fallback)                          */
 /* -------------------------------------------------------------------------- */
 
@@ -410,14 +530,19 @@ export async function peekRateLimit(
 ): Promise<RateLimitResult> {
   const now = Date.now();
 
-  const shared = await redisWindow(request, options, false, now);
+  const shared = await sharedWindow(request, options, false, now);
   if (shared) return shared;
 
   if (options.failClosed) {
-    // Configured but not answering: refuse rather than guess.
-    if (SHARED_CONFIGURED) return unavailable(options, now);
-    const refused = withoutSharedStore(options, now);
-    if (refused) return refused;
+    if (hasSharedStore()) {
+      // Configured but not answering. Refuse rather than guess — unless the
+      // documented override says to keep serving on per-instance limits.
+      if (!ALLOW_MEMORY_IN_PRODUCTION) return unavailable(options, now);
+      warnMemoryInProduction(options.namespace);
+    } else {
+      const refused = withoutSharedStore(options, now);
+      if (refused) return refused;
+    }
   }
 
   const bucket = readBucket(request, options, now);
@@ -436,13 +561,17 @@ export async function rateLimit(
 ): Promise<RateLimitResult> {
   const now = Date.now();
 
-  const shared = await redisWindow(request, options, true, now);
+  const shared = await sharedWindow(request, options, true, now);
   if (shared) return shared;
 
   if (options.failClosed) {
-    if (SHARED_CONFIGURED) return unavailable(options, now);
-    const refused = withoutSharedStore(options, now);
-    if (refused) return refused;
+    if (hasSharedStore()) {
+      if (!ALLOW_MEMORY_IN_PRODUCTION) return unavailable(options, now);
+      warnMemoryInProduction(options.namespace);
+    } else {
+      const refused = withoutSharedStore(options, now);
+      if (refused) return refused;
+    }
   }
 
   const bucket = readBucket(request, options, now);

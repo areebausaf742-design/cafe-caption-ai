@@ -403,22 +403,35 @@ SDK, one `fetch`, `INCR` + `PEXPIRE NX` + `PTTL` in a single pipeline.
 **Fail closed where it costs money, open where it doesn't.** The two cases are
 not symmetric, so they don't behave the same way:
 
-| Redis | Paid routes (`generate`, `translate`, `dish-vision`, `dish-model`) | Free routes (`leads`, publish, edit) |
+Two shared backends, tried in order: **Upstash** if configured, then **Postgres**
+through `rate_limit_hit()` (which every deployment already has, since Supabase is
+required for menus). Upstash is an accelerator — faster, and keeps counters out
+of the primary database — not a prerequisite.
+
+| Shared store | Paid routes (`generate`, `translate`, `dish-vision`, `dish-model`) | Free routes (`leads`, publish, edit) |
 | --- | --- | --- |
-| not configured, production | **`503 RATE_LIMIT_NOT_CONFIGURED`** (no `Retry-After`: retrying will not help) | in-memory map |
-| not configured, development | in-memory map, one `console.warn` | in-memory map |
-| configured, unreachable | **`503 RATE_LIMIT_UNAVAILABLE`**, `Retry-After: 30` | in-memory map |
+| Supabase (default) | shared counter, enforced across every isolate | shared counter |
+| Upstash configured | Upstash counter, one `fetch` per request | same |
+| none, production | **`503 RATE_LIMIT_NOT_CONFIGURED`** (no `Retry-After`: retrying will not help) | in-memory map |
+| none, development | in-memory map, one `console.warn` | in-memory map |
+| configured, unreachable | **`503 RATE_LIMIT_UNAVAILABLE`**, `Retry-After: 30` (or the override, below) | in-memory map |
 
 A per-instance counter under a limit of six isn't a limit once a burst can spread
 across isolates — an unmetered paid endpoint is worse than half a minute of
 honest downtime, and in production "no limiter at all" is worse than both, which
 is why production refuses rather than falling back.
 
-**The one override.** `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` puts a Redis-less
-production deployment back on per-instance limits, deliberately and visibly: it
-logs a warning on every boot and deleting the variable restores the strict
-behaviour. It exists so that shipping the control and provisioning Redis don't
-have to happen in the same minute — not as a long-term setting. The free routes keep the fallback, because a broken counter must
+**The one override.** `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` puts a deployment back
+on per-instance limits, deliberately and visibly: it logs a warning on every boot
+and deleting the variable restores the strict behaviour. It now covers two cases
+— no shared store at all, and the shared store being unreachable — so it is also
+the safe way to deploy *before* `20261121100000_rate_limit_store.sql` has been
+applied. Not a long-term setting.
+
+**The Postgres store needs no account.** A fixed window in a table, incremented
+by a single `insert … on conflict do update … returning` (atomic, so two isolates
+cannot both read 5 and both write 6), behind `service_role`-only functions. One
+migration, no dashboard, no second outage mode. The free routes keep the fallback, because a broken counter must
 never be the reason a visitor can't save a menu. The 503 is distinguishable from
 the 429 on purpose: nothing about the caller's usage is wrong. So the paid routes
 should have Upstash configured; without it they still work, but the numbers only

@@ -147,6 +147,31 @@ describe("the repository is sellable, not just runnable", () => {
     expect(handover).toContain("Accounts to transfer");
   });
 
+  it("keeps the one-paste SQL file identical to the migrations it wraps", async () => {
+    // A generated file that drifts is worse than no file: it looks authoritative
+    // and applies the wrong schema. The builder's --check mode fails on drift.
+    const { execFileSync } = await import("node:child_process");
+    const cwd = fileURLToPath(new URL("..", import.meta.url));
+    expect(() =>
+      execFileSync(process.execPath, ["scripts/build-apply-all.mjs", "--check"], {
+        cwd,
+        stdio: "pipe",
+      }),
+    ).not.toThrow();
+  });
+
+  it("has a one-paste SQL file that contains every pending migration", () => {
+    const applyAll = source("supabase/APPLY-ALL.sql");
+    for (const migration of [
+      "20261114120000_lock_anon_inserts.sql",
+      "20261114130000_menu_indexing.sql",
+      "20261121100000_rate_limit_store.sql",
+    ]) {
+      expect(applyAll).toContain(migration);
+    }
+    expect(applyAll).toContain("VERIFY");
+  });
+
   it("runs the gate in CI, not only on a laptop", () => {
     const ci = source(".github/workflows/ci.yml");
     for (const step of ["npm run typecheck", "npm run lint", "npm test", "npm run build"]) {

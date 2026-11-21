@@ -86,8 +86,8 @@ Names only. Values live in the Vercel project, never in this repo.
 | `GEMINI_API_KEY` | Caption studio, menu translation, dish vision | Those routes answer 503 |
 | `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | Reading published menus | Menus answer "not configured" |
 | `SUPABASE_SERVICE_ROLE_KEY` | **All writes** | Publishing and leads answer 503 (never a downgrade) |
-| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Shared rate limiting | Production refuses paid routes (see §9.3) |
-| `RATE_LIMIT_ALLOW_MEMORY_LIMITS` | Override for the above | — |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | *Optional* faster shared rate limiter | Falls back to the Postgres store |
+| `RATE_LIMIT_ALLOW_MEMORY_LIMITS` | Override: per-instance limits, warned per boot | — |
 | `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` | Analytics | Nothing; events are no-ops |
 | `R2_*`, `NEXT_PUBLIC_ASSET_HOSTS` | Persistent 3D model storage | Models are ephemeral |
 | `GENERATION_DISABLED` | Kill switch for paid generation | — |
@@ -136,8 +136,15 @@ incremental steps, applied by hand in the Supabase SQL editor.
 | --- | --- | --- |
 | `20261114120000_lock_anon_inserts.sql` | Revoke anon INSERT on `leads`/`menus`; writes become service-role only | **No** — check before assuming |
 | `20261114130000_menu_indexing.sql` | `indexable` column, `menu_public()` returns it, `menu_indexable()` for the sitemap | **No** — check before assuming |
+| `20261121100000_rate_limit_store.sql` | `rate_limits` table + `rate_limit_hit()` / `rate_limit_peek()`, the shared limiter | **No** — check before assuming |
 
-Both are idempotent and safe to run twice. Until the first is applied, anyone with
+**Apply them all at once:** paste the contents of **`supabase/APPLY-ALL.sql`**
+into the Supabase SQL editor and press Run. That file is generated from the three
+migrations by `node scripts/build-apply-all.mjs` (a test fails if it drifts), runs
+in order, and ends with the verification queries and the cleanup of the old
+verification rows.
+
+All three are idempotent and safe to run twice. Until the first is applied, anyone with
 the publishable key can insert rows directly. Until the second is applied, every
 menu stays `noindex` and the sitemap lists no menus.
 
@@ -155,11 +162,12 @@ select public.menu_indexable();
 1. **No accounts and no billing.** `POST /api/menus` is rate-limited but otherwise
    open. There is no way to charge anyone today.
 2. **Anon INSERT is still open** until the migration in §8 runs.
-3. **Rate limiting runs on a per-instance map in production right now**, because
-   `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` is set as a deliberate stopgap. A burst
-   across isolates can exceed the intended limit. Fix: add Upstash, delete the
-   variable. The strict behaviour (refuse paid routes with `503
-   RATE_LIMIT_NOT_CONFIGURED`) is already written and tested.
+3. **Rate limiting is on per-instance limits in production until APPLY-ALL.sql
+   runs**, because `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` is set as a stopgap. That
+   variable is what keeps the paid tools working while the `rate_limits` table
+   doesn't exist yet. Apply the SQL, then delete the variable: the shared counter
+   takes over immediately and the strict behaviour (refuse with `503
+   RATE_LIMIT_NOT_CONFIGURED`) becomes the safety net rather than the norm.
 4. **Menu pages are `noindex` by default.** Only rows with `indexable = true`
    reach the sitemap.
 5. **Dish 3D depends on a third party.** A free ZeroGPU Space can be asleep, rate
@@ -208,8 +216,10 @@ Expect **$0–$25/month** until there is real traffic, plus variable Gemini spen
 ## 12. A buyer's first day
 
 1. Rotate every key (§6). Do not reuse the previous owner's credentials.
-2. Add Upstash, then delete `RATE_LIMIT_ALLOW_MEMORY_LIMITS` (§9.3).
-3. Apply both migrations (§8) and verify with the two queries.
+2. Apply `supabase/APPLY-ALL.sql` (§8), then delete
+   `RATE_LIMIT_ALLOW_MEMORY_LIMITS` (§9.3). No new service is needed — the
+   shared limiter runs on the database you already have.
+3. Verify with the queries at the end of that file.
 4. Delete the verification rows (§9.8).
 5. Point the real domain at the project and set `NEXT_PUBLIC_SITE_URL`.
 6. Run `npm run verify:release` against the live URL and read the report.
