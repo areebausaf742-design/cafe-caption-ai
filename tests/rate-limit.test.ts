@@ -16,11 +16,20 @@ const TOKEN_ENV = "UPSTASH_REDIS_REST_TOKEN";
 type Limiter = typeof import("@/lib/rate-limit");
 
 async function loadLimiter(
-  env: { url?: string; token?: string; nodeEnv?: string; allowMemory?: string } = {},
+  env: {
+    url?: string;
+    token?: string;
+    nodeEnv?: string;
+    allowMemory?: string;
+    supabaseUrl?: string;
+    serviceKey?: string;
+  } = {},
 ): Promise<Limiter> {
   vi.resetModules();
   vi.stubEnv(URL_ENV, env.url ?? "");
   vi.stubEnv(TOKEN_ENV, env.token ?? "");
+  vi.stubEnv("SUPABASE_URL", env.supabaseUrl ?? "");
+  vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", env.serviceKey ?? "");
   // Production is a *behaviour*, not a build flag: the limiter has to decide
   // what to do when a paid route has no shared store, and only prod refuses.
   vi.stubEnv("NODE_ENV", env.nodeEnv ?? "test");
@@ -342,5 +351,132 @@ describe("route wiring", () => {
     const source = read("app/api/leads/route.ts");
     expect(source).not.toContain("failClosed");
     expect(source).not.toContain("RATE_LIMIT_UNAVAILABLE");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*  The Postgres store (no Upstash, no extra account)                         */
+/* -------------------------------------------------------------------------- */
+
+const SUPABASE_URL = "https://project-ref.supabase.co";
+const SERVICE_KEY = "service-role-key-for-tests";
+
+/** What `rate_limit_hit` / `rate_limit_peek` answer. */
+const rpcReply = (count: number, resetInSeconds = 600) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ count, resetAt: Math.floor(Date.now() / 1000) + resetInSeconds }),
+});
+
+const supabaseEnv = { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY };
+
+describe("Postgres store — a shared limiter with no new account", () => {
+  it("spends through rate_limit_hit with the service key", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(rpcReply(1));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { rateLimit } = await loadLimiter(supabaseEnv);
+    const rate = await rateLimit(request(), PAID);
+
+    expect(rate.allowed).toBe(true);
+    expect(rate.limit).toBe(6);
+    expect(rate.unavailable).toBeUndefined();
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${SUPABASE_URL}/rest/v1/rpc/rate_limit_hit`);
+    const headers = init.headers as Record<string, string>;
+    expect(headers.apikey).toBe(SERVICE_KEY);
+    expect(headers.Authorization).toBe(`Bearer ${SERVICE_KEY}`);
+    // The window travels in seconds, the limiter thinks in milliseconds.
+    expect(JSON.parse(String(init.body))).toMatchObject({ p_window: 600 });
+  });
+
+  it("peeks without spending", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(rpcReply(2));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { peekRateLimit } = await loadLimiter(supabaseEnv);
+    const rate = await peekRateLimit(request(), PAID);
+
+    expect(rate.allowed).toBe(true);
+    const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/rpc/rate_limit_peek");
+  });
+
+  it("blocks once the shared counter passes the limit", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rpcReply(7)));
+
+    const { rateLimit } = await loadLimiter(supabaseEnv);
+    const rate = await rateLimit(request(), PAID);
+
+    expect(rate.allowed).toBe(false);
+    expect(rate.remaining).toBe(0);
+    expect(rate.retryAfter).toBeGreaterThan(0);
+    // A 429, not a 503: the caller really did run out of budget.
+    expect(rate.unavailable).toBeUndefined();
+  });
+
+  it("prefers Upstash when both are configured — it never touches the database", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(healthy(1));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { rateLimit } = await loadLimiter({ ...supabaseEnv, url: "https://upstash.test", token: "t" });
+    await rateLimit(request(), PAID);
+
+    const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://upstash.test/pipeline");
+  });
+
+  it("calls a missing migration a misconfiguration, not an outage", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => "" }));
+
+    const { rateLimit } = await loadLimiter({ ...supabaseEnv, nodeEnv: "production" });
+    const rate = await rateLimit(request(), PAID);
+
+    expect(rate.misconfigured).toBe(true);
+    expect(rate.retryAfter).toBe(0);
+    expect(String(error.mock.calls[0]?.[0])).toContain("20261121100000_rate_limit_store.sql");
+  });
+
+  it("still counts requests when the migration is missing and the override is set", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => "" }));
+
+    const { rateLimit } = await loadLimiter({
+      ...supabaseEnv,
+      nodeEnv: "production",
+      allowMemory: "1",
+    });
+
+    const first = await rateLimit(request(), PAID);
+    expect(first.allowed).toBe(true);
+    expect(first.misconfigured).toBeUndefined();
+  });
+
+  it("treats a 500 from the database as an outage, not a misconfiguration", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => "" }));
+
+    const { rateLimit } = await loadLimiter({ ...supabaseEnv, nodeEnv: "production" });
+    const rate = await rateLimit(request(), PAID);
+
+    expect(rate.unavailable).toBe(true);
+    expect(rate.misconfigured).toBeUndefined();
+  });
+
+  it("matches the SQL the migration actually defines", () => {
+    const sql = readFileSync(
+      fileURLToPath(new URL("../supabase/migrations/20261121100000_rate_limit_store.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(sql).toContain("create or replace function public.rate_limit_hit(");
+    expect(sql).toContain("create or replace function public.rate_limit_peek(");
+    expect(sql).toContain("p_key");
+    expect(sql).toContain("p_window");
+    // The counters must not be reachable with the publishable key.
+    expect(sql).toContain("grant execute on function public.rate_limit_hit(text, integer)  to service_role;");
+    expect(sql).toContain("from public, anon, authenticated");
   });
 });
