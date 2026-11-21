@@ -21,10 +21,38 @@ import type { DigitalMenu } from "@/lib/types";
  * page has no interactivity worth shipping JavaScript for.
  */
 
+const DEMO_TITLE = "Demo digital menu";
+const DEMO_DESCRIPTION =
+  "A sample cafe digital menu built from a photo of a printed card — the page behind the CafeCaption QR code.";
+
 export const metadata: Metadata = {
-  title: "Demo digital menu",
-  description:
-    "A sample cafe digital menu built from a photo of a printed card — the page behind the CafeCaption QR code.",
+  title: DEMO_TITLE,
+  description: DEMO_DESCRIPTION,
+  alternates: { canonical: "/menu/demo" },
+  // Without these the demo shares as the CafeCaption homepage, which is the
+  // wrong promise: someone tapping this link in a WhatsApp chat should see a
+  // menu, not a studio.
+  openGraph: {
+    type: "website",
+    siteName: "CafeCaption",
+    url: `${siteUrl}/menu/demo`,
+    title: `${DEMO_TITLE} — CafeCaption`,
+    description: DEMO_DESCRIPTION,
+    images: [
+      {
+        url: `${siteUrl}/opengraph-image`,
+        width: 1200,
+        height: 630,
+        alt: "A sample CafeCaption digital menu",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${DEMO_TITLE} — CafeCaption`,
+    description: DEMO_DESCRIPTION,
+    images: [`${siteUrl}/opengraph-image`],
+  },
   // A sample menu shouldn't compete with real client menus in search.
   robots: { index: false, follow: true },
 };

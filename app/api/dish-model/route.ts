@@ -20,7 +20,12 @@ import { NextResponse } from "next/server";
 
 import { parsePhoto } from "@/lib/image-validate";
 import { putModel, modelStoreConfigured } from "@/lib/model-store";
-import { peekRateLimit, rateLimit, withRateHeaders } from "@/lib/rate-limit";
+import {
+  peekRateLimit,
+  rateLimit,
+  rateLimitRefusal,
+  withRateHeaders,
+} from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
 import { generateModel, generatorConfigured, generatorProvider } from "@/lib/space-3d";
 
@@ -65,8 +70,9 @@ export async function POST(request: Request) {
 
   if (!rate.allowed) {
     if (rate.unavailable) {
+      const refusal = rateLimitRefusal(rate);
       return withRateHeaders(
-        fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        fail(503, refusal.error, refusal.code, {
           retryAfter: rate.retryAfter,
         }),
         rate,
@@ -158,8 +164,9 @@ export async function POST(request: Request) {
   const spent = await rateLimit(request, LIMIT);
   if (!spent.allowed) {
     if (spent.unavailable) {
+      const refusal = rateLimitRefusal(spent);
       return withRateHeaders(
-        fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        fail(503, refusal.error, refusal.code, {
           retryAfter: spent.retryAfter,
         }),
         spent,

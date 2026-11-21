@@ -1,8 +1,15 @@
-/* eslint-disable @next/next/no-page-custom-font --
-   That rule targets the Pages Router. In the App Router the root layout loads
-   fonts once for the whole app, and Google Fonts is loaded via <link> so the
-   build never depends on network access. */
 import type { Metadata, Viewport } from "next";
+
+/*
+ * Fonts are self-hosted (npm, not a runtime download): the two variable families
+ * are imported here, fingerprinted into /_next/static, and served from our own
+ * origin. That removes a third-party stylesheet from the critical path, removes
+ * a render-blocking round trip before first paint, and lets the CSP drop
+ * fonts.googleapis.com / fonts.gstatic.com entirely.
+ */
+import "@fontsource-variable/fraunces";
+import "@fontsource-variable/fraunces/wght-italic.css";
+import "@fontsource-variable/plus-jakarta-sans";
 
 import AnalyticsProvider from "@/components/AnalyticsProvider";
 import MotionRoot from "@/components/motion/MotionRoot";
@@ -132,19 +139,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      {/* Fonts load from Google Fonts at runtime (no build-time fetch needed).
-          Swap the two families here + in app/globals.css to re-theme the app. */}
+      {/* No font <link> any more: the families are bundled CSS. Swap the two
+          imports above + the stacks in app/globals.css to re-theme the app. */}
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
-        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

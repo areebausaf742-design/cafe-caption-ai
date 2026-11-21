@@ -19,8 +19,11 @@
  */
 
 /** The Google Fonts stylesheet and the files it points at — two origins. */
-export const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com";
-export const GOOGLE_FONTS_FILES = "https://fonts.gstatic.com";
+/**
+ * Fonts are self-hosted (`@fontsource-variable/*`, imported in `app/layout.tsx`),
+ * so no third-party font host appears in the policy at all. Both directives are
+ * same-origin only; `data:` stays for inline SVG masks.
+ */
 
 /** Vercel's preview toolbar/comments, preview deployments only. */
 const VERCEL_LIVE = "https://vercel.live";
@@ -88,9 +91,10 @@ export function buildCsp({
     "frame-ancestors 'none'",
     "form-action 'self'",
     "manifest-src 'self'",
-    // Google Fonts: the stylesheet is a style source, the woff2 files are fonts.
-    list("font-src 'self' data:", GOOGLE_FONTS_FILES, preview && VERCEL_LIVE),
-    list("style-src 'self' 'unsafe-inline'", GOOGLE_FONTS_CSS),
+    // Fonts are bundled from npm (see app/layout.tsx), so both directives are
+    // same-origin. `data:` covers inline SVG masks.
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
     // Blob/data URLs come from the PNG QR export and the browser-side photo
     // previews; the listed hosts are dish posters and 3D model previews.
     list("img-src 'self' data: blob:", ...assets, preview && VERCEL_LIVE),

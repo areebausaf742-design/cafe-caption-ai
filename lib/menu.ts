@@ -72,6 +72,15 @@ export interface MenuDoc extends MenuDraft {
   slug: string;
   /** ISO timestamp, so the owner can see the edit actually landed. */
   updatedAt: string;
+  /**
+   * Whether this menu may appear in search results.
+   *
+   * Off by default and opt-in per row: free publishing has no moderation step,
+   * so a menu is only indexable once someone has looked at it. Absent (the
+   * column doesn't exist yet) reads as false, which keeps the page `noindex`
+   * exactly as it was before.
+   */
+  indexable?: boolean;
 }
 
 export type MenuValidation =

@@ -149,5 +149,33 @@ function mapRow(row: Record<string, unknown>): MenuDoc {
     items: Array.isArray(row.items) ? (row.items as MenuDoc["items"]) : [],
     published: row.published !== false,
     updatedAt: String(row.updatedAt ?? ""),
+    indexable: row.indexable === true,
   };
+}
+
+/**
+ * Slugs and timestamps of menus cleared for indexing, for the sitemap.
+ *
+ * Returns `[]` on every failure — a sitemap that 500s costs more than one
+ * missing URL, and the function only exists once the indexing migration has
+ * been applied, so "not there yet" is a normal answer rather than an error.
+ */
+export async function readIndexableMenus(): Promise<
+  { slug: string; updatedAt: string }[]
+> {
+  if (!menuStoreConfigured()) return [];
+
+  try {
+    const rows = await rpc<Record<string, unknown>[]>("menu_indexable", {});
+    if (!Array.isArray(rows)) return [];
+
+    return rows
+      .map((row) => ({
+        slug: String(row.slug ?? ""),
+        updatedAt: String(row.updatedAt ?? ""),
+      }))
+      .filter((row) => row.slug.length > 0);
+  } catch {
+    return [];
+  }
 }

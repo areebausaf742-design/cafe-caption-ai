@@ -37,6 +37,13 @@ export interface RateLimitResult {
    * `RATE_LIMIT_UNAVAILABLE` instead of a 429.
    */
   unavailable?: boolean;
+  /**
+   * True when `unavailable` is caused by missing configuration rather than an
+   * outage: the deployment is in production and has no shared limiter at all.
+   * Routes report it as `RATE_LIMIT_NOT_CONFIGURED`, which is a different thing
+   * to tell a visitor ("paused") and to tell an operator ("set the variables").
+   */
+  misconfigured?: boolean;
 }
 
 /**
@@ -51,6 +58,13 @@ export interface RateLimitResult {
  * `UPSTASH_REDIS_REST_TOKEN` are set (no SDK, no extra dependency, one `fetch`),
  * and the in-memory map — correct for local dev and a single long-lived server —
  * when they aren't.
+ *
+ * What happens when there is no Redis at all depends on the environment and on
+ * what the request costs. In production a paid route with no shared limiter is
+ * **refused** (503 `RATE_LIMIT_NOT_CONFIGURED`): the whole point of the limiter
+ * is a budget that survives a cold start, and without a shared store there is no
+ * such thing. `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` re-enables the per-instance map
+ * deliberately, and logs a warning per boot saying exactly what that costs.
  *
  * What happens when Redis *is* configured but doesn't answer depends on what the
  * request costs. Routes that only touch our own database or CPU (`leads`,
@@ -69,6 +83,21 @@ const SHARED_CONFIGURED = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
 
 /** How long a fail-closed route asks the client to wait during an outage. */
 const UNAVAILABLE_RETRY_SECONDS = 30;
+
+const PRODUCTION = process.env.NODE_ENV === "production";
+
+/**
+ * The escape hatch — and it is meant to look like one.
+ *
+ * A per-instance `Map` under a limit of six is not a limit once a burst can
+ * spread across cold starts, so in production a paid route with no shared
+ * limiter **refuses** rather than pretending. This variable is the only way to
+ * say "I know, keep serving me anyway", and it exists so a deployment without
+ * Redis degrades loudly instead of silently: the console says so once per boot,
+ * and removing the line restores the strict behaviour.
+ */
+const ALLOW_MEMORY_IN_PRODUCTION =
+  process.env.RATE_LIMIT_ALLOW_MEMORY_LIMITS === "1";
 
 /** A slow Redis must not hold a request open. */
 const REDIS_TIMEOUT_MS = 1_500;
@@ -187,17 +216,67 @@ function summarise(
  *
  * Deliberately *not* a 429: nothing about the caller's usage is wrong. The
  * route turns `unavailable` into a 503 and tells the client to come back in
- * half a minute, which is the truth.
+ * half a minute, which is the truth for an outage.
+ *
+ * `misconfigured` is the permanent version of the same answer: production with
+ * no limiter configured at all. "Try again in 30 seconds" would be a lie there,
+ * so the routes say so in a code the operator can grep for.
  */
-function unavailable(options: RateLimitOptions, now: number): RateLimitResult {
+function unavailable(
+  options: RateLimitOptions,
+  now: number,
+  misconfigured = false,
+): RateLimitResult {
   return {
     allowed: false,
     limit: options.max,
     remaining: 0,
     resetAt: Math.ceil((now + UNAVAILABLE_RETRY_SECONDS * 1000) / 1000),
-    retryAfter: UNAVAILABLE_RETRY_SECONDS,
+    // 0 for a misconfiguration: there is no moment when retrying starts working,
+    // so no route sends a Retry-After that implies otherwise.
+    retryAfter: misconfigured ? 0 : UNAVAILABLE_RETRY_SECONDS,
     unavailable: true,
+    ...(misconfigured ? { misconfigured: true } : {}),
   };
+}
+
+/**
+ * Paid route, no shared limiter. Decide between "refuse" and "count locally".
+ *
+ * Production refuses unless `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1`; everything else
+ * (local dev, tests, a self-hosted single process) counts locally and warns
+ * once. Returns the refusal, or `null` to mean "carry on with the map".
+ */
+function withoutSharedStore(options: RateLimitOptions, now: number): RateLimitResult | null {
+  if (PRODUCTION) {
+    if (ALLOW_MEMORY_IN_PRODUCTION) {
+      warnMemoryInProduction(options.namespace);
+      return null;
+    }
+    warnNoSharedStore(options.namespace);
+    return unavailable(options, now, true);
+  }
+
+  warnLocalOnly(options.namespace);
+  return null;
+}
+
+let warnedNoSharedStore = false;
+function warnNoSharedStore(namespace: string) {
+  if (warnedNoSharedStore) return;
+  warnedNoSharedStore = true;
+  console.error(
+    `[rate-limit] No shared limiter in production — refusing "${namespace}" rather than serving it unmetered. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN. (Per-instance limits can be re-enabled deliberately with RATE_LIMIT_ALLOW_MEMORY_LIMITS=1.)`,
+  );
+}
+
+let warnedMemoryInProduction = false;
+function warnMemoryInProduction(namespace: string) {
+  if (warnedMemoryInProduction) return;
+  warnedMemoryInProduction = true;
+  console.warn(
+    `[rate-limit] RATE_LIMIT_ALLOW_MEMORY_LIMITS=1 — "${namespace}" is metered by a per-instance map that a burst across isolates can exceed. Configure Upstash and remove that variable to fail closed.`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -337,7 +416,8 @@ export async function peekRateLimit(
   if (options.failClosed) {
     // Configured but not answering: refuse rather than guess.
     if (SHARED_CONFIGURED) return unavailable(options, now);
-    warnLocalOnly(options.namespace);
+    const refused = withoutSharedStore(options, now);
+    if (refused) return refused;
   }
 
   const bucket = readBucket(request, options, now);
@@ -361,7 +441,8 @@ export async function rateLimit(
 
   if (options.failClosed) {
     if (SHARED_CONFIGURED) return unavailable(options, now);
-    warnLocalOnly(options.namespace);
+    const refused = withoutSharedStore(options, now);
+    if (refused) return refused;
   }
 
   const bucket = readBucket(request, options, now);
@@ -369,6 +450,28 @@ export async function rateLimit(
   sweep(now);
 
   return summarise(bucket.count, options, now, true, bucket.resetAt - now);
+}
+
+/**
+ * The copy and the code for a refusal, in one place so four paid routes cannot
+ * drift apart — and so the difference between "the limiter is down" and "this
+ * deployment has no limiter at all" is stated once rather than eight times.
+ */
+export function rateLimitRefusal(rate: RateLimitResult): {
+  error: string;
+  code: "RATE_LIMIT_UNAVAILABLE" | "RATE_LIMIT_NOT_CONFIGURED";
+} {
+  return rate.misconfigured
+    ? {
+        error:
+          "Rate limiting isn't configured on this deployment, so this tool is paused. Please try again later.",
+        code: "RATE_LIMIT_NOT_CONFIGURED",
+      }
+    : {
+        error:
+          "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.",
+        code: "RATE_LIMIT_UNAVAILABLE",
+      };
 }
 
 /** Attach standard rate-limit headers to a response. */

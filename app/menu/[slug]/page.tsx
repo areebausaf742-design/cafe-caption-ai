@@ -6,6 +6,7 @@ import { ArrowUpRight, Clock } from "lucide-react";
 import MenuLanguages from "@/components/menu/MenuLanguages";
 import { SLUG_RE, type MenuDoc } from "@/lib/menu";
 import { menuStoreConfigured, readPublicMenu } from "@/lib/menu-store";
+import { siteName, siteUrl } from "@/lib/site";
 
 /**
  * A café's live menu — the page the QR on the table points at.
@@ -24,25 +25,57 @@ type Props = { params: Promise<{ slug: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const route = `/menu/${slug}`;
+  const url = `${siteUrl}${route}`;
 
-  let cafeName = "";
+  let menu: MenuDoc | null = null;
   if (SLUG_RE.test(slug) && menuStoreConfigured()) {
     try {
-      cafeName = (await readPublicMenu(slug))?.cafeName ?? "";
+      menu = await readPublicMenu(slug);
     } catch {
       // A slow database shouldn't cost the page its title.
     }
   }
 
+  const cafeName = menu?.cafeName ?? "";
+  const title = cafeName ? `${cafeName} — menu` : "Live menu";
+  const description = cafeName
+    ? `${cafeName}'s menu, with prices, kept up to date — scan, read, order.`
+    : "A digitised café menu with prices, kept up to date.";
+
+  // Indexing is opt-in per menu (`public.menus.indexable`), set after someone
+  // has actually looked at the row — see the moderation note in schema.sql.
+  // Everything else stays `noindex, follow`: a QR on a table is not a search
+  // result, and an unreviewed row is not something to put in front of Google.
+  const indexable = menu?.indexable === true;
+
   return {
-    title: cafeName ? `${cafeName} — menu` : "Live menu",
-    description: cafeName
-      ? `${cafeName}'s menu, with prices, kept up to date — scan, read, order.`
-      : "A digitised café menu with prices, kept up to date.",
+    title,
+    description,
     alternates: { canonical: route },
-    // Free publishing has no moderation step yet, so a menu stays out of search
-    // until someone looks at it. Flipping this is one line when it matters.
-    robots: { index: false, follow: true },
+    // Without these, a café pasting their menu link into WhatsApp gets the
+    // CafeCaption homepage card: wrong title, wrong description, wrong URL.
+    openGraph: {
+      type: "website",
+      siteName,
+      url,
+      title,
+      description,
+      images: [
+        {
+          url: `${siteUrl}/opengraph-image`,
+          width: 1200,
+          height: 630,
+          alt: cafeName ? `${cafeName} — live menu` : "CafeCaption live menu",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [`${siteUrl}/opengraph-image`],
+    },
+    robots: indexable ? { index: true, follow: true } : { index: false, follow: true },
   };
 }
 

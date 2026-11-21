@@ -16,18 +16,20 @@ const base = buildCsp({ nodeEnv: "production" });
 const enforced = parse(base.enforced);
 const reportOnly = parse(base.reportOnly);
 
-describe("enforced policy — the fonts actually load", () => {
-  it("allows the Google Fonts stylesheet in style-src", () => {
-    // Without this the whole site renders in fallback serif and the console
-    // fills with refusals; this assertion exists because that happened.
-    expect(enforced["style-src"]).toContain("https://fonts.googleapis.com");
-    expect(enforced["style-src"]).toContain("'self'");
+describe("enforced policy — fonts are self-hosted, so no font host is allowed", () => {
+  // This used to assert the opposite: the fonts were a Google stylesheet, and
+  // the policy had to allow it or the site rendered in fallback serif. Now the
+  // families are bundled from @fontsource into /_next/static, so the *tightest*
+  // correct policy is same-origin only — and a regression that quietly
+  // reintroduces a third-party font host should fail here.
+  it("allows no font host in style-src", () => {
+    expect(enforced["style-src"]).toEqual(["'self'", "'unsafe-inline'"]);
+    expect(base.enforced).not.toContain("fonts.googleapis.com");
   });
 
-  it("allows the font files in font-src, alongside 'self' and data:", () => {
-    expect(enforced["font-src"]).toContain("https://fonts.gstatic.com");
-    expect(enforced["font-src"]).toContain("'self'");
-    expect(enforced["font-src"]).toContain("data:");
+  it("allows no font host in font-src, only 'self' and data:", () => {
+    expect(enforced["font-src"]).toEqual(["'self'", "data:"]);
+    expect(base.enforced).not.toContain("fonts.gstatic.com");
   });
 });
 

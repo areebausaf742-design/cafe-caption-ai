@@ -2,7 +2,11 @@
 
 import { useEffect } from "react";
 
-import { attachAnalytics } from "@/lib/analytics";
+import {
+  attachAnalytics,
+  isPrivatePath,
+  sanitizeAnalyticsProperties,
+} from "@/lib/analytics";
 
 /**
  * Loads PostHog once, in the browser, and only when a key exists.
@@ -19,6 +23,13 @@ import { attachAnalytics } from "@/lib/analytics";
  *   `lib/analytics.ts`, never form contents or clicks on everything.
  * - `disable_session_recording: true` → no screen recording of visitors.
  * - `respect_dnt: true` → visitors sending Do Not Track are ignored entirely.
+ *
+ * Two more rules guard the menu editor. Its capability key lives in the URL
+ * fragment, and PostHog builds `$current_url` from `window.location.href` — so
+ * (a) every URL-shaped property is stripped of its fragment before it leaves the
+ * browser, and (b) `/menu/<slug>/edit` never emits a pageview at all. Both live
+ * in `lib/analytics.ts` where they are unit-tested, because "the key stayed out
+ * of analytics" is not something to take on trust.
  */
 let started = false;
 
@@ -57,6 +68,18 @@ export default function AnalyticsProvider({
           disable_session_recording: true,
           respect_dnt: true,
           cross_subdomain_cookie: false,
+          // Belt: no fragment survives into any event property.
+          sanitize_properties: (properties) =>
+            sanitizeAnalyticsProperties(properties as Record<string, unknown>),
+          // Braces: the editor page reports nothing at all.
+          before_send: (payload) => {
+            if (!payload) return payload;
+            const url = payload.properties?.$current_url;
+            if (payload.event === "$pageview" && typeof url === "string" && isPrivatePath(url)) {
+              return null;
+            }
+            return payload;
+          },
         });
 
         attachAnalytics(posthog);

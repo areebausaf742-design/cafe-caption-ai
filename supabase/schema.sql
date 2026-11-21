@@ -71,6 +71,9 @@ create table if not exists public.menus (
                 check (jsonb_typeof(items) = 'array'
                    and jsonb_array_length(items) between 1 and 120),
   published     boolean not null default true,
+  -- Opt-in search visibility. Off by default: free publishing has no moderation
+  -- step, so a menu becomes indexable only after someone has looked at the row.
+  indexable     boolean not null default false,
   edit_key_hash text not null check (edit_key_hash ~ '^[0-9a-f]{64}$'),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
@@ -102,12 +105,39 @@ as $$
     'tagline',    m.tagline,
     'whatsapp',   m.whatsapp,
     'items',      m.items,
-    'updatedAt',  m.updated_at
+    'updatedAt',  m.updated_at,
+    -- Drives `robots` on the public page and inclusion in sitemap.xml.
+    'indexable',  m.indexable
   )
   from public.menus m
   where m.slug = p_slug
     and m.published;
 $$;
+
+-- The sitemap's read: which published menus are cleared for indexing.
+-- Security definer for the same reason as the rest — nothing about `menus` is
+-- reachable by `anon` except through these functions.
+create or replace function public.menu_indexable()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object('slug', m.slug, 'updatedAt', m.updated_at)
+      order by m.updated_at desc
+    ),
+    '[]'::jsonb
+  )
+  from public.menus m
+  where m.published
+    and m.indexable;
+$$;
+
+revoke all on function public.menu_indexable() from public;
+grant execute on function public.menu_indexable() to anon;
 
 -- Owner read: requires the hash of the edit key. Returns drafts too.
 create or replace function public.menu_read(p_slug text, p_hash text)
@@ -169,6 +199,12 @@ grant execute on function public.menu_save(text, text, text, text, text, jsonb, 
 
 -- Turn a menu off without deleting it:
 --   update public.menus set published = false where slug = 'chai-and-chapter';
+
+-- Moderation: let one menu into search once you have actually read it. This is
+-- the whole approval step — there is no owner-facing toggle yet, on purpose,
+-- because an index entry is our reputation rather than the café's.
+--   update public.menus set indexable = true where slug = 'chai-and-chapter';
+--   update public.menus set indexable = false where slug = 'chai-and-chapter';
 
 -- ---------------------------------------------------------------------------
 -- Hardening migration (2026-11)
