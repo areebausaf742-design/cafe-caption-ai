@@ -22,24 +22,35 @@ import { INTERESTS, type Interest, type LeadInput } from "@/lib/leads";
  * the tab doesn't open, the visitor closes it, or the in-app browser blocks it.
  */
 
+type SaveOutcome = "saved" | "failed";
+
 /**
- * Fire-and-forget lead capture.
+ * Lead capture that reports back, without ever delaying the handoff.
  *
- * Deliberately not awaited: `window.open` only survives popup blocking while it
- * runs inside the same user gesture, so this must not put an await between the
+ * The call itself is never awaited: `window.open` only survives popup blocking
+ * while it runs inside the same user gesture, so nothing may sit between the
  * click and the tab. `keepalive` lets the request finish even if the visitor
- * switches to WhatsApp immediately. If it fails, nothing the visitor sees
- * changes — the chat is still the real channel.
+ * switches to WhatsApp immediately — and the *result* is surfaced afterwards,
+ * because "your enquiry was saved" must not be shown for a 503.
  */
-function saveLead(input: LeadInput) {
-  void fetch("/api/leads", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    keepalive: true,
-  }).catch(() => {
-    /* the WhatsApp handoff is unaffected */
-  });
+async function saveLead(input: LeadInput): Promise<SaveOutcome> {
+  try {
+    const response = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      keepalive: true,
+    });
+
+    if (!response.ok) return "failed";
+
+    // The route answers `{ stored: true }` only when the row is in the database.
+    const body = (await response.json().catch(() => null)) as { stored?: boolean } | null;
+    return body?.stored === true ? "saved" : "failed";
+  } catch {
+    // Offline, blocked by an extension, or the tab closed — the chat still works.
+    return "failed";
+  }
 }
 
 interface FormState {
@@ -64,6 +75,9 @@ export default function LeadForm() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [sentUrl, setSentUrl] = useState<string | null>(null);
+  // "unknown" until the POST settles: the card never claims a save it hasn't seen.
+  const [saveState, setSaveState] =
+    useState<"unknown" | "pending" | SaveOutcome>("unknown");
 
   const interestLabel = useMemo(
     () => INTERESTS.find((option) => option.id === form.interest)?.label ?? "",
@@ -108,13 +122,14 @@ export default function LeadForm() {
 
     const url = whatsappUrl(lines.join("\n"));
 
-    saveLead({
+    setSaveState("pending");
+    void saveLead({
       name,
       cafeName,
       city,
       interest: form.interest,
       message: form.message.trim() || undefined,
-    });
+    }).then(setSaveState);
 
     track({ name: "lead_submit", props: { interest: form.interest } });
     setSentUrl(url);
@@ -149,7 +164,29 @@ export default function LeadForm() {
         </a>
 
         <p className="mx-auto mt-2.5 max-w-xs text-[10.5px] leading-[1.65] text-espresso-500">
-          Nothing opened? Tap the button above — the message is saved.
+          Nothing opened? Tap the button above — the message is written for you.
+        </p>
+
+        {/*
+          What actually happened to the copy. Deliberately below the WhatsApp
+          button: the chat is the channel, the row is the backup — but the backup
+          is either there or it isn't, and saying so is the difference between a
+          reassurance and a lie.
+        */}
+        <p
+          role="status"
+          aria-live="polite"
+          className={`mx-auto mt-2 max-w-xs text-[10.5px] leading-[1.65] ${
+            saveState === "failed" ? "text-[#7A3520]" : "text-espresso-500"
+          }`}
+        >
+          {saveState === "pending" && "Saving a copy here…"}
+          {saveState === "saved" &&
+            "A copy is saved here too, so it isn't lost if the chat doesn't open."}
+          {saveState === "failed" &&
+            "The copy couldn't be saved on our side — send the WhatsApp message and it still reaches us."}
+          {/* Before the POST settles there is nothing to claim. */}
+          {saveState === "unknown" && ""}
         </p>
 
         <button
@@ -157,6 +194,7 @@ export default function LeadForm() {
           onClick={() => {
             setForm(EMPTY);
             setSentUrl(null);
+            setSaveState("unknown");
           }}
           className="mx-auto mt-3 inline-flex min-h-[44px] items-center text-[11px] text-espresso-500 underline-offset-2 hover:text-espresso-800 hover:underline"
         >

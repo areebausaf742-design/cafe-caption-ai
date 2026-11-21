@@ -40,6 +40,7 @@ import {
   peekRateLimit,
   rateLimit,
   withRateHeaders,
+  rateLimitRefusal,
   type RateLimitResult,
 } from "@/lib/rate-limit";
 import {
@@ -669,7 +670,8 @@ export async function POST(request: Request) {
   let rate = await peekRateLimit(request, LIMIT);
   if (!rate.allowed) {
     if (rate.unavailable) {
-      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+      const refusal = rateLimitRefusal(rate);
+      return fail(503, refusal.error, refusal.code, {
         retryAfter: rate.retryAfter,
         rate,
       });
@@ -852,7 +854,8 @@ export async function POST(request: Request) {
     const photoRate = await rateLimit(request, PHOTO_LIMIT);
     if (!photoRate.allowed) {
       if (photoRate.unavailable) {
-        return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+        const refusal = rateLimitRefusal(photoRate);
+        return fail(503, refusal.error, refusal.code, {
           retryAfter: photoRate.retryAfter,
           rate,
         });

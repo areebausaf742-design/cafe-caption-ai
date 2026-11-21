@@ -29,7 +29,7 @@ import { GEMINI_FALLBACK_MODEL, GEMINI_PRIMARY_MODEL, thinkingConfigFor } from "
 import { BlockedReply, blockReason, isRetryable } from "@/lib/gemini-retry";
 import { MAX_CATEGORY, MAX_ITEM_NAME, MAX_ITEMS } from "@/lib/menu";
 import type { TranslationPayload, TranslatedLine } from "@/lib/menu-translate";
-import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult } from "@/lib/rate-limit";
+import { peekRateLimit, rateLimit, withRateHeaders, type RateLimitResult, rateLimitRefusal } from "@/lib/rate-limit";
 import { readJsonWithLimit } from "@/lib/request-body";
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from "@/lib/types";
 import { extractJsonObject } from "@/lib/json";
@@ -249,7 +249,8 @@ export async function POST(request: Request) {
 
   if (!rate.allowed) {
     if (rate.unavailable) {
-      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+      const refusal = rateLimitRefusal(rate);
+      return fail(503, refusal.error, refusal.code, {
         rate,
         retryAfter: rate.retryAfter,
       });
@@ -322,7 +323,8 @@ export async function POST(request: Request) {
   const spent = await rateLimit(request, LIMIT);
   if (!spent.allowed) {
     if (spent.unavailable) {
-      return fail(503, "The limiter is briefly unavailable, so new requests are paused. Try again in about 30 seconds.", "RATE_LIMIT_UNAVAILABLE", {
+      const refusal = rateLimitRefusal(spent);
+      return fail(503, refusal.error, refusal.code, {
         rate: spent,
         retryAfter: spent.retryAfter,
       });

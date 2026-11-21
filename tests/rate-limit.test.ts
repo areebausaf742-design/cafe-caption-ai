@@ -15,10 +15,16 @@ const TOKEN_ENV = "UPSTASH_REDIS_REST_TOKEN";
 
 type Limiter = typeof import("@/lib/rate-limit");
 
-async function loadLimiter(env: { url?: string; token?: string } = {}): Promise<Limiter> {
+async function loadLimiter(
+  env: { url?: string; token?: string; nodeEnv?: string; allowMemory?: string } = {},
+): Promise<Limiter> {
   vi.resetModules();
   vi.stubEnv(URL_ENV, env.url ?? "");
   vi.stubEnv(TOKEN_ENV, env.token ?? "");
+  // Production is a *behaviour*, not a build flag: the limiter has to decide
+  // what to do when a paid route has no shared store, and only prod refuses.
+  vi.stubEnv("NODE_ENV", env.nodeEnv ?? "test");
+  vi.stubEnv("RATE_LIMIT_ALLOW_MEMORY_LIMITS", env.allowMemory ?? "");
   return import("@/lib/rate-limit");
 }
 
@@ -87,6 +93,95 @@ describe("no Upstash configured — paid routes keep working on the in-memory ma
   });
 });
 
+describe("production with no shared limiter — paid routes refuse", () => {
+  it("refuses with a code that says 'not configured', not 'try again in 30s'", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { peekRateLimit } = await loadLimiter({ nodeEnv: "production" });
+
+    const rate = await peekRateLimit(request(), PAID);
+
+    expect(rate.allowed).toBe(false);
+    expect(rate.unavailable).toBe(true);
+    expect(rate.misconfigured).toBe(true);
+    // Retrying changes nothing, so the routes must not send a Retry-After.
+    expect(rate.retryAfter).toBe(0);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("No shared limiter in production");
+  });
+
+  it("refuses the spend path too", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { rateLimit } = await loadLimiter({ nodeEnv: "production" });
+    expect((await rateLimit(request(), PAID)).misconfigured).toBe(true);
+  });
+
+  it("says so once, not once per request", async () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { rateLimit } = await loadLimiter({ nodeEnv: "production" });
+    await rateLimit(request(), PAID);
+    await rateLimit(request(), PAID);
+    await rateLimit(request(), PAID);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves free routes on the in-memory map, as before", async () => {
+    const { rateLimit } = await loadLimiter({ nodeEnv: "production" });
+    const first = await rateLimit(request(), FREE);
+    expect(first.allowed).toBe(true);
+    expect(first.unavailable).toBeUndefined();
+  });
+
+  it("still refuses when Redis is configured but only half of it is set", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // A URL with no token is not a configured limiter, but it isn't an outage
+    // either — it is the same misconfiguration.
+    const { peekRateLimit } = await loadLimiter({ nodeEnv: "production", url: "https://example.upstash.io" });
+    expect((await peekRateLimit(request(), PAID)).misconfigured).toBe(true);
+  });
+
+  it("honours the documented escape hatch, and warns about what it costs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { rateLimit } = await loadLimiter({ nodeEnv: "production", allowMemory: "1" });
+
+    const rate = await rateLimit(request(), PAID);
+
+    expect(rate.allowed).toBe(true);
+    expect(rate.misconfigured).toBeUndefined();
+    expect(String(warn.mock.calls[0]?.[0])).toContain("RATE_LIMIT_ALLOW_MEMORY_LIMITS=1");
+  });
+
+  it("does not refuse in development", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { rateLimit } = await loadLimiter({ nodeEnv: "development" });
+    expect((await rateLimit(request(), PAID)).allowed).toBe(true);
+  });
+
+  it("copies the refusal into a usable error + code", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { peekRateLimit, rateLimitRefusal } = await loadLimiter({ nodeEnv: "production" });
+
+    const refusal = rateLimitRefusal(await peekRateLimit(request(), PAID));
+
+    expect(refusal.code).toBe("RATE_LIMIT_NOT_CONFIGURED");
+    expect(refusal.error).toContain("paused");
+  });
+});
+
+describe("rateLimitRefusal", () => {
+  it("calls an outage an outage", async () => {
+    const { rateLimitRefusal } = await loadLimiter();
+    const refusal = rateLimitRefusal({
+      allowed: false,
+      limit: 6,
+      remaining: 0,
+      resetAt: 0,
+      retryAfter: 30,
+      unavailable: true,
+    });
+    expect(refusal.code).toBe("RATE_LIMIT_UNAVAILABLE");
+    expect(refusal.error).toContain("30 seconds");
+  });
+});
+
 describe("Upstash configured but unreachable — paid routes fail closed", () => {
   const broken = { url: "https://example.upstash.io", token: "token" };
 
@@ -100,6 +195,8 @@ describe("Upstash configured but unreachable — paid routes fail closed", () =>
     expect(rate.unavailable).toBe(true);
     expect(rate.remaining).toBe(0);
     expect(rate.retryAfter).toBe(30);
+    // An outage, not a misconfiguration — the routes say different things.
+    expect(rate.misconfigured).toBeUndefined();
     // resetAt is Unix seconds, ~30s out — not a millisecond timestamp leaking in.
     expect(rate.resetAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
     expect(rate.resetAt).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000) + 31);
@@ -235,8 +332,8 @@ describe("route wiring", () => {
     "%s: turns `unavailable` into a 503, not a 429",
     (path) => {
       const source = read(path);
-      expect(source).toContain("rate.unavailable");
-      expect(source).toContain("RATE_LIMIT_UNAVAILABLE");
+      expect(source).toContain(".unavailable");
+      expect(source).toContain("rateLimitRefusal");
       expect(source).toMatch(/fail\(\s*503/);
     },
   );

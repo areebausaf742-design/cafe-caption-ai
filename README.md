@@ -60,6 +60,11 @@ npm run dev                  # http://localhost:3000
 
 ### Package manager and dependencies
 
+- **Fonts are self-hosted.** `app/layout.tsx` imports the two variable families
+  from `@fontsource-variable/*`, so the woff2 files are fingerprinted into
+  `/_next/static` and served from our own origin. There is no Google Fonts
+  stylesheet on the critical path, and the enforced CSP allows no third-party
+  font host at all (`font-src 'self' data:`, `style-src 'self' 'unsafe-inline'`).
 - **Node 20 or newer** (`engines.node`). The build script sets `NODE_ENV` through
   `cross-env`, so `npm run build` works in Windows `cmd`/PowerShell as well as a
   POSIX shell — `NODE_ENV=production next build` is a syntax error in the former.
@@ -393,12 +398,20 @@ not symmetric, so they don't behave the same way:
 
 | Redis | Paid routes (`generate`, `translate`, `dish-vision`, `dish-model`) | Free routes (`leads`, publish, edit) |
 | --- | --- | --- |
-| not configured | in-memory map, one `console.warn` | in-memory map |
-| configured, unreachable | **`503 RATE_LIMIT_UNAVAILABLE`**, `retryAfter: 30` | in-memory map |
+| not configured, production | **`503 RATE_LIMIT_NOT_CONFIGURED`** (no `Retry-After`: retrying will not help) | in-memory map |
+| not configured, development | in-memory map, one `console.warn` | in-memory map |
+| configured, unreachable | **`503 RATE_LIMIT_UNAVAILABLE`**, `Retry-After: 30` | in-memory map |
 
 A per-instance counter under a limit of six isn't a limit once a burst can spread
 across isolates — an unmetered paid endpoint is worse than half a minute of
-honest downtime. The free routes keep the fallback, because a broken counter must
+honest downtime, and in production "no limiter at all" is worse than both, which
+is why production refuses rather than falling back.
+
+**The one override.** `RATE_LIMIT_ALLOW_MEMORY_LIMITS=1` puts a Redis-less
+production deployment back on per-instance limits, deliberately and visibly: it
+logs a warning on every boot and deleting the variable restores the strict
+behaviour. It exists so that shipping the control and provisioning Redis don't
+have to happen in the same minute — not as a long-term setting. The free routes keep the fallback, because a broken counter must
 never be the reason a visitor can't save a menu. The 503 is distinguishable from
 the 429 on purpose: nothing about the caller's usage is wrong. So the paid routes
 should have Upstash configured; without it they still work, but the numbers only
@@ -550,9 +563,24 @@ To take a menu down without deleting it:
 update public.menus set published = false where slug = 'chai-and-chapter';
 ```
 
+**Search visibility is opt-in, per menu.** Every menu page is `noindex, follow`
+by default, and `/sitemap.xml` lists only our own pages. To let one menu into
+search — after actually reading it — approve the row and it appears in the
+sitemap within the hour and switches to `index, follow`:
+
+```sql
+update public.menus set indexable = true where slug = 'chai-and-chapter';
+```
+
+`indexable` arrives with `supabase/migrations/20261114130000_menu_indexing.sql`
+(`menu_public()` returns it, and `menu_indexable()` is what the sitemap reads).
+Both directions degrade safely: with the migration unapplied, the page stays
+`noindex` and the sitemap ships its page list instead of failing.
+
 **Known limitation, stated plainly:** publishing is open to anyone who finds the
 page, because there is no billing or accounts yet. It is rate-limited, the pages
-are `noindex`, and a menu can be unpublished with one SQL statement. If this
+are `noindex` until approved, and a menu can be unpublished with one SQL
+statement. If this
 becomes the paid product the plan describes, the gate goes at the top of
 `POST /api/menus` — the rest of the path doesn't change.
 
@@ -915,7 +943,15 @@ Every event is declared in `lib/analytics.ts` and fired through `track()`:
 | `menu_language` | A customer switches the menu's language | `language` |
 | `dish_3d_open` | A dish is opened in the 3D viewer | `had_poster` — never which dish |
 
-Page views are captured too (`capture_pageview: true`).
+Page views are captured too (`capture_pageview: true`) — except on the editor.
+The owner's capability key lives in the URL *fragment*, and PostHog builds
+`$current_url` from `window.location.href`, so a pageview from
+`/menu/<slug>/edit#<key>` would hand the key to a third party. Two defences, both
+in `components/AnalyticsProvider.tsx`: `sanitize_properties` strips the fragment
+from every URL-shaped property (so a `capture()` from anywhere is covered), and
+`before_send` drops pageviews whose path is an editor route (so the path stops
+being reported at all). `isPrivatePath()` is a prefix match, so `/menu/x/edit`
+and `/menu/x/edit#…` are both caught while the public `/menu/x` is still counted.
 
 **Privacy defaults** — chosen deliberately, documented on `/privacy`:
 
@@ -940,7 +976,7 @@ structured data.
 | Route | Serves |
 | --- | --- |
 | `/opengraph-image` | 1200×630 preview (also used by Twitter) |
-| `/sitemap.xml` | `/`, `/privacy`, `/terms` |
+| `/sitemap.xml` | `/`, `/privacy`, `/terms`, plus every menu marked `indexable` |
 | `/robots.txt` | allows pages, disallows `/api/` |
 | `/manifest.webmanifest` | Installable app metadata |
 
@@ -963,7 +999,7 @@ app/
   layout.tsx               # shell: fonts, SEO, header/footer, JSON-LD, analytics
   page.tsx                 # hero, studio, packages, process, FAQ, contact
   menu/demo/page.tsx       # the page the demo QR points at (server component)
-  menu/[slug]/page.tsx     # a café's live menu — what its QR encodes
+  menu/[slug]/page.tsx     # a café's live menu — what its QR encodes (own OG/Twitter card)
   menu/[slug]/edit/page.tsx# owner editor shell (key lives in the fragment)
   privacy/, terms/         # legal pages
   opengraph-image.tsx      # generated social card

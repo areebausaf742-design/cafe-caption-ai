@@ -130,3 +130,67 @@ export function track({ name, props }: AnalyticsEvent): void {
     // Analytics must never break a click.
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  URL hygiene                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The editor's capability key lives in the URL *fragment*, because a fragment is
+ * the one part of a URL the browser never sends to a server. Analytics is the
+ * exception: PostHog's `$current_url`, `$referrer` and friends are built from
+ * `window.location.href`, so the fragment rides along into a third-party tool
+ * and the key becomes an event property.
+ *
+ * Two defences, both here so they can be unit-tested:
+ *   1. `stripUrlFragment()` — every URL-shaped property loses its fragment
+ *      before an event leaves the browser.
+ *   2. `isPrivatePath()` — the editor route never emits a pageview at all.
+ */
+export function stripUrlFragment(value: string): string {
+  const hash = value.indexOf("#");
+  if (hash === -1) return value;
+  return value.slice(0, hash);
+}
+
+/** Path of an absolute URL or a path, without query or fragment. */
+function pathOf(value: string): string {
+  try {
+    return new URL(value, "https://example.invalid").pathname;
+  } catch {
+    return stripUrlFragment(value).split("?")[0] ?? "";
+  }
+}
+
+/**
+ * Editor pages: `/menu/<slug>/edit`. These carry a capability key, so nothing
+ * about them is worth reporting — the visit itself is the owner's business.
+ */
+export function isPrivatePath(value: string): boolean {
+  return /^\/menu\/[^/]+\/edit\/?$/.test(pathOf(value));
+}
+
+/**
+ * Strip fragments from every URL-shaped property PostHog collects, without
+ * mutating the caller's object. Anything that parses as an absolute http(s) URL
+ * or starts with "/" is treated as a URL; other strings are left alone.
+ */
+export function sanitizeAnalyticsProperties(
+  properties: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(properties)) {
+    if (typeof value !== "string") {
+      out[key] = value;
+      continue;
+    }
+
+    const looksLikeUrl =
+      value.startsWith("http://") || value.startsWith("https://") || value.startsWith("/");
+
+    out[key] = looksLikeUrl ? stripUrlFragment(value) : value;
+  }
+
+  return out;
+}

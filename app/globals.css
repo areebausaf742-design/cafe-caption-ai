@@ -3,11 +3,12 @@
 @tailwind utilities;
 
 :root {
-  /* Fonts are loaded in app/layout.tsx via Google Fonts <link> tags.
-     Swap these two stacks to change the whole app's typography. */
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", sans-serif;
+  /* Self-hosted variable fonts, imported in app/layout.tsx from @fontsource.
+     The names below are the families those packages declare. Swap the imports
+     and these two stacks to change the whole app's typography. */
+  --font-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", sans-serif;
 
   /* Warm light used by the hero glow and card hairlines */
   --amber-glow: 237, 187, 124;
