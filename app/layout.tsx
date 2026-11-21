@@ -153,6 +153,11 @@ export default function RootLayout({
         </noscript>
       </head>
       <body className="min-h-dvh font-sans">
+        {/* Keyboard users land on the first link otherwise, which on a page with
+            a sticky header and a nav is a long way from the content. */}
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
         <AnalyticsProvider>
           <MotionRoot>
             <SiteHeader />

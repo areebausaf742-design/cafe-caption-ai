@@ -3,10 +3,11 @@
 /**
  * Security headers, applied to every response.
  *
- * Kept deliberately boring: no CSP yet. A wrong `script-src` silently breaks
- * Next's inline bootstrap, analytics and the JSON-LD block, and this site has no
- * third-party embeds that a CSP would be buying us protection from. Adding one
- * properly needs a nonce, which is a separate piece of work.
+ * The Content-Security-Policy is *not* here: it needs a per-request header, so it
+ * is built in `lib/csp.ts` and attached by `middleware.ts`. This file carries the
+ * headers that never vary. `script-src` there is report-only until it can carry a
+ * nonce — see the comment in `lib/csp.ts` for why that is a deliberate choice and
+ * not an oversight.
  */
 const securityHeaders = [
   // Never let a browser re-interpret a response as a type we didn't send.

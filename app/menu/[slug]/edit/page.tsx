@@ -23,7 +23,7 @@ export default async function MenuEditPage({ params }: Props) {
   if (!SLUG_RE.test(slug)) notFound();
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 pt-8 pb-16 sm:px-6 sm:pt-12">
+    <main id="main" tabIndex={-1} className="mx-auto w-full max-w-2xl px-4 pt-8 pb-16 sm:px-6 sm:pt-12">
       <p className="label">Menu editor</p>
       <h1 className="mt-3 font-display text-[1.6rem] font-semibold leading-[1.12] tracking-[-0.02em] text-espresso-900 sm:text-[1.9rem]">
         Change a price, save, done.

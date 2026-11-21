@@ -1,0 +1,50 @@
+# The gate every change has to pass, run somewhere other than a developer's
+# laptop. Four commands, no deployment: typecheck, lint, tests, production build.
+#
+# Deliberately no secrets. The build is expected to succeed with **no**
+# environment variables set — that is a property of the app worth keeping (a
+# misconfigured deployment should still render the marketing site), and this job
+# is the thing that enforces it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: typecheck · lint · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

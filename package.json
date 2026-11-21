@@ -48,5 +48,21 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "AREEB AUSAF",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/areebausaf742-design/cafe-caption-ai.git"
+  },
+  "homepage": "https://cafe-caption-ai.vercel.app",
+  "keywords": [
+    "nextjs",
+    "cafe",
+    "menu",
+    "qr-menu",
+    "gemini",
+    "tailwindcss",
+    "supabase"
+  ]
 }
